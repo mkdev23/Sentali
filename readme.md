@@ -1,36 +1,100 @@
-# 🛡️ Sentali — Security‑Focused AI Agent
+🛡️ Sentali — Security‑Focused AI AgentSentali is a professional, approachable AI agent represented by a blue alien avatar. It interacts with users via voice and visual cues in a web‑based Unity environment, with a strong emphasis on security‑by‑design, modular architecture, and future‑proof workflows.
 
-**Sentali** is a professional, approachable AI agent represented by a **blue alien avatar**.  
-It interacts with users via **voice** and **visual cues** in a **web‑based Unity environment**,  
-with a strong emphasis on **security‑by‑design**, **modular architecture**, and **future‑proof workflows**.
+📜 OverviewSentali is designed for:
 
----
+Secure, real‑time interaction between users and AI
 
-## 📜 Overview
+Expressive avatar rendering with biomechanical realism
 
-Sentali is designed for:
-- **Secure, real‑time interaction** between users and AI
-- **Expressive avatar rendering** with biomechanical realism
-- **Cross‑platform compatibility** (desktop & mobile browsers)
-- **Modular backend/frontend separation** for maintainability
+Cross‑platform compatibility (desktop & mobile browsers)
 
-The avatar is **visually engaging** yet **professional**,  
-making it suitable for enterprise, education, and public‑facing applications.
+Modular backend/frontend separation for maintainability
 
----
+The avatar is visually engaging yet professional, making it suitable for enterprise, education, and public‑facing applications.
 
-## ✨ Features
+✨ Features
 
-- 🎙 **Voice Interaction** — Real‑time speech recognition & synthesis
-- 🧠 **AI‑Driven Responses** — Context‑aware, secure conversational logic
-- 👽 **3D Avatar** — Blue alien with natural posing & facial expressions
-- 🌐 **Web‑Based Unity Integration** — Runs in modern browsers
-- 🔒 **Security‑First Architecture** — Input validation, sandboxed execution
-- ⚙ **Modular Codebase** — Easy to extend, refactor, and onboard new devs
+🎙 Voice Interaction — Real‑time speech recognition & synthesis
 
----
+🧠 AI‑Driven Responses — Context‑aware, secure conversational logic
 
-## 🛠 Tech Stack
+👽 3D Avatar — Blue alien with natural posing & facial expressions
+
+🌐 Web‑Based Unity Integration — Runs in modern browsers
+
+🔒 Security‑First Architecture — Input validation, sandboxed execution
+
+⚙ Modular Codebase — Easy to extend, refactor, and onboard new devs
+
+🧠 Core LLM FunctionalitySentali is not just conversational — it's a security-focused Copilot.🔐 Security Intelligence & Reasoning
+
+Security Q&A — Respond to user queries about secure coding, threat models, best practices
+
+Threat Intel Integration — Pull from simulated APIs (CISA, MITRE, OTX)
+
+Code Generation & Review — Generate secure code snippets, annotate with inline security suggestions
+
+Static Analysis Tools — Bandit, ESLint, Semgrep integration to flag issues
+
+Threat Landscape Awareness — Real-time queries about vulnerabilities, CVEs, attack vectors
+
+Feed Summarization — Summarize threat feeds and suggest mitigations
+
+🧑‍🎤 Multi-Modal InteractionSentali integrates deeply with voice and avatar animation.
+
+Azure TTS/STT — Voice synthesis with emotional SSML tuning; speech-to-text for voice input
+
+Tone Detection — Azure Text Analytics to classify emotional tone
+
+Expression Mapping — Map tone to avatar blendshapes
+
+Avatar Sync — Trigger gestures, expressions, and lip sync based on agent output
+
+Animator Controller — Manage speaking/listening states
+
+🧩 Modular OrchestrationSentali is scalable and team-friendly, built on Azure Functions.
+
+Function Modules:
+
+LLM + security context
+
+Sentiment + emotion classification
+
+Blendshape trigger logic
+
+Store user-agent exchanges in Cosmos DB
+
+Copilot Studio Integration — Augloop prompt engineering, plugin orchestration
+
+Telemetry — Application Insights
+
+♿ Accessibility & UX IntelligenceSentali supports inclusive design via a Fluent UI webapp.
+
+Contrast-aware responses
+
+Screen reader-friendly output formatting
+
+Keyboard navigation and semantic HTML
+
+Multilingual support (optional)
+
+🧑‍🤝‍🧑 Multi-Agent ExpansionSentali supports multiple personalities or roles:
+
+Helper Agent — Friendly, supportive, guides users
+
+Analyst Agent — Technical, precise, security-focused
+
+Challenger Agent — Provokes deeper thinking, flags risky assumptions
+
+Each agent can have:
+
+Distinct tone and expression mapping
+
+Unique avatar cues (e.g., color shift, posture)
+
+Separate Azure Function logic
+
+🛠 Tech Stack
 
 Layer
 
@@ -56,9 +120,7 @@ Build/CI
 
 GitHub Actions, Docker (optional)
 
-📂 Project Structure
-
-SentaliApp/
+📂 Project StructureSentaliApp/
 ├── backend/           # .NET backend services
 ├── frontend/          # Unity WebGL + Three.js frontend
 │   ├── public/Assets/ # VRM, WAV, HDRI files
@@ -67,40 +129,12 @@ SentaliApp/
 ├── LICENSE
 └── README.md
 
-🚀 Getting Started
+🚀 Getting Started1. Clone the repositorygit clone https://github.com/mkdev23/Sentali.git
+cd Sentali/SentaliApp2. Install dependenciesFrontendcd frontend
+npm installBackendcd backend
+dotnet restore3. Run locallyFrontendnpm run devBackenddotnet run
 
-1. Clone the repository
-
-git clone https://github.com/mkdev23/Sentali.git
-cd Sentali/SentaliApp
-
-2. Install dependencies
-
-Frontend
-
-cd frontend
-npm install
-
-Backend
-
-cd backend
-dotnet restore
-
-3. Run locally
-
-Frontend
-
-npm run dev
-
-Backend
-
-dotnet run
-
-🐳 Optional: Run with Docker
-
-docker-compose up --build
-
-(Requires Docker Desktop)
+🐳 Optional: Run with Dockerdocker-compose up --build(Requires Docker Desktop)
 
 🔐 Security Notes
 
@@ -124,10 +158,6 @@ Commit changes with clear messages
 
 Push to your fork and open a Pull Request
 
-📄 License
+📄 LicenseThis project is licensed under the MIT License — see the LICENSE file for details.
 
-This project is licensed under the MIT License — see the LICENSE file for details.
-
-📬 Contact
-
-For collaboration or inquiries:GitHub: mkdev23Maintainer: Julius
+📬 ContactFor collaboration or inquiries: GitHub: mkdev23 Maintainer: Julius
