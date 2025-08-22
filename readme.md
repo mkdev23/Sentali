@@ -1,4 +1,4 @@
-# 🛡️ Sentali — Security‑Focused AI Agent
+# 🛡️ Sentali — Security‑Focused AI Agent Companion
 
 Sentali is a professional, approachable AI agent represented by a blue alien avatar.  
 It interacts with users via voice and visual cues in a web‑based Unity environment,  
