@@ -41,6 +41,7 @@ directionalLights.forEach(light => scene.add(light));
 
 let currentVRM;
 let blendfaces;
+let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
@@ -50,17 +51,25 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   controls.update();
   overlay && (overlay.textContent = '✅ VRM loaded — waiting for WS data...');
 
+  // Initialize Blendfaces
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
     smooth: 0.3,
     decay: 1.5,
     rest: { blink: 0.0, neutral: 1.0 }
   });
+
+  // Register a single WS handler with Blendfaces (once)
+  blendfaces.attachWS((cb) => {
+    blendfacesWSHandler = cb;
+  });
 });
 
 function setExpression(rawName, weight) {
+  window.setExpression = setExpression;
+
   if (!currentVRM) return;
-  const key = rawName.toLowerCase();
+  const key = typeof rawName === 'string' ? rawName.toLowerCase() : rawName;
   const mapped = expressionMap[key] ?? VRMExpressionPresetName[key] ?? rawName;
 
   if (currentVRM.expressionManager) {
@@ -73,19 +82,34 @@ function setExpression(rawName, weight) {
 }
 
 function shouldUseBlendfaces() {
-  return blendfacesToggle?.checked && blendfaces;
+  return !!blendfaces && (!!blendfacesToggle ? blendfacesToggle.checked : true);
 }
 
+// IMPORTANT: Fleck server listens on ws://host:8123 (no /ws path)
+const WS_URL = (window.SENTALI_WS_URL ?? '').trim() || 'ws://127.0.0.1:8124';
+
 const wsClient = new WSClient({
-  url: 'ws://localhost:8123/ws',
+  url: WS_URL,
   onOpen: () => overlay && (overlay.textContent = '✅ WS connected — waiting for cues...'),
   onMessage: (data) => {
-    if (shouldUseBlendfaces()) {
-      blendfaces.attachWS((cb) => cb(data));
+    // Debug visibility
+    // console.log('[WS] message:', data);
+    console.log("[WS] Received:", data);
+
+
+    if (shouldUseBlendfaces() && blendfacesWSHandler) {
+      blendfacesWSHandler(data);
     } else {
-      if (data.type === 'blendshape') setExpression(data.name, data.weight);
-      else if (data.type === 'blendshapes') Object.entries(data.values).forEach(([k, v]) => setExpression(k, v));
-      else if (data.type === 'viseme') setExpression(data.name, data.weight);
+      // Fallback: direct setExpression for simple cues
+      if (data?.type === 'blendshape' && typeof data.name === 'string' && typeof data.weight === 'number') {
+        setExpression(data.name, data.weight);
+        overlay && (overlay.textContent = `Blendshape: ${data.name} (${data.weight})`);
+      } else if (data?.type === 'blendshapes' && data.values && typeof data.values === 'object') {
+        Object.entries(data.values).forEach(([k, v]) => setExpression(k, Number(v)));
+        overlay && (overlay.textContent = `Blendshapes: ${Object.keys(data.values).join(', ')}`);
+      } else if (data?.type === 'viseme' && typeof data.name === 'string' && typeof data.weight === 'number') {
+        setExpression(data.name, data.weight);
+      }
     }
   },
   onClose: () => overlay && (overlay.textContent = '❌ WS disconnected')
