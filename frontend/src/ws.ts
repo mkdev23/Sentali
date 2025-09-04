@@ -18,7 +18,7 @@ export class WSClient {
   private maxRetries = 10;
 
   constructor(opts: WSOpts = {}) {
-    this.url = opts.url ?? 'ws://localhost:8123/ws';
+    this.url = opts.url ?? 'ws://0.0.0.1:8124';
     this.protocols = opts.protocols;
     this.onMessage = opts.onMessage;
     this.onOpen = opts.onOpen;
@@ -37,6 +37,7 @@ export class WSClient {
       };
 
       this.ws.onmessage = (e) => {
+        // console.log('[WS] raw:', e.data);
         try {
           const json = JSON.parse(e.data);
           this.onMessage?.(json);

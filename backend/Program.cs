@@ -19,6 +19,8 @@ app.Map("/ws", async context =>
         context.Response.StatusCode = 400;
     }
 });
+// Start Fleck WebSocket server on a separate port
+var wsHub = new WsHub("ws://0.0.0.0:8124"); // <-- different port than HTTP
 
 // Listen on all interfaces, port 8123
 app.Run("http://0.0.0.0:8123");
