@@ -7,7 +7,6 @@ import {
   Object3D,
   Camera,
   Quaternion
-
 } from 'three';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -28,7 +27,7 @@ function alignArmToPencil(bone: Object3D | null | undefined, inwardOffset = 0) {
   if (!bone) return;
 
   let child: Object3D | null = null;
-  bone.traverse((obj) => {
+  bone.traverse((obj: Object3D) => {
     if (
       obj !== bone &&
       (obj.name.toLowerCase().includes('lowerarm') ||
@@ -38,10 +37,12 @@ function alignArmToPencil(bone: Object3D | null | undefined, inwardOffset = 0) {
       child = obj;
     }
   });
+
   if (!child) return;
 
-  const startPos = new Vector3().setFromMatrixPosition(bone.matrixWorld);
-  const endPos = new Vector3().setFromMatrixPosition(child.matrixWorld);
+  // Explicitly assert types so TS knows these are Object3D
+  const startPos = new Vector3().setFromMatrixPosition((bone as Object3D).matrixWorld);
+  const endPos = new Vector3().setFromMatrixPosition((child as Object3D).matrixWorld);
 
   const boneVec = endPos.clone().sub(startPos).normalize();
   const targetVec = new Vector3(0, -1, 0); // straight down
@@ -58,7 +59,7 @@ export function applyRelaxedArms(vrm: VRM) {
   const humanoid: any = (vrm as any).humanoid;
   if (!humanoid) return;
 
-  const bone = (name: string) =>
+  const bone = (name: string): Object3D | null | undefined =>
     humanoid.getNormalizedBoneNode?.(name) ||
     humanoid.getRawBoneNode?.(name) ||
     humanoid.getBoneNode?.(name);
@@ -67,11 +68,11 @@ export function applyRelaxedArms(vrm: VRM) {
   alignArmToPencil(bone('leftUpperArm'), -0.05);
   alignArmToPencil(bone('rightUpperArm'), 0.05);
 
-    // Subtle elbow bend
-    const lLower = bone('leftLowerArm');
-    const rLower = bone('rightLowerArm');
-    if (lLower) lLower.rotation.x += 0.12;
-    if (rLower) rLower.rotation.x += 0.12;
+  // Subtle elbow bend
+  const lLower = bone('leftLowerArm');
+  const rLower = bone('rightLowerArm');
+  if (lLower) lLower.rotation.x += 0.12;
+  if (rLower) rLower.rotation.x += 0.12;
 
   // Hands: your preferred .5 rotation for palms inward/fingers down
   const leftHand = bone('leftHand');
@@ -83,28 +84,20 @@ export function applyRelaxedArms(vrm: VRM) {
   if (leftHand) leftHand.rotation.y += 0.05;
   if (rightHand) rightHand.rotation.y -= 0.05;
 
+  // Slight shoulder/clavicle relax
+  const lShoulder = bone('leftShoulder') || bone('LeftShoulder');
+  const rShoulder = bone('rightShoulder') || bone('RightShoulder');
+  if (lShoulder) lShoulder.rotation.z -= 0.06;
+  if (rShoulder) rShoulder.rotation.z += 0.06;
 
-
-
-    // Slight shoulder/clavicle relax
-    const lShoulder = bone('leftShoulder') || bone('LeftShoulder');
-    const rShoulder = bone('rightShoulder') || bone('RightShoulder');
-    if (lShoulder) lShoulder.rotation.z -= 0.06;
-    if (rShoulder) rShoulder.rotation.z += 0.06;
-
-
-// Optional micro-idle helper you can call per-frame:
-(vrm as any).__restIdle = (t: number) => {
-  const head = bone('head');
-  const chest = bone('chest');
-  if (head) head.rotation.y += Math.sin(t * 0.25) * 0.0015;
-  if (chest) chest.position.y += Math.sin(t * 1.2) * 0.003;
-};
-
-
+  // Optional micro-idle helper you can call per-frame:
+  (vrm as any).__restIdle = (t: number) => {
+    const head = bone('head');
+    const chest = bone('chest');
+    if (head) head.rotation.y += Math.sin(t * 0.25) * 0.0015;
+    if (chest) chest.position.y += Math.sin(t * 1.2) * 0.003;
+  };
 }
-
-
 
 /**
  * Loads a VRM model, applies relaxed arms and look-at, adds to scene, and frames it.
@@ -134,7 +127,7 @@ export async function loadVRM(
       applyRelaxedArms(vrm);
       applyLookAtPose(vrm, camera);
 
-      scene.add(vrm.scene as unknown as Object3D);
+      scene.add(vrm.scene as Object3D);
       frameToHeadOrBounds(vrm, camera, controls);
 
       onLoaded?.(vrm);
@@ -155,7 +148,7 @@ function frameToHeadOrBounds(
   const target = new Vector3();
 
   // Prefer framing on humanoid head
-  const head =
+  const head: Object3D | null | undefined =
     vrm.humanoid?.getNormalizedBoneNode?.('head') ||
     vrm.humanoid?.getRawBoneNode?.('head') ||
     vrm.humanoid?.getBoneNode?.('head');
@@ -174,7 +167,7 @@ function frameToHeadOrBounds(
   }
 
   // Fallback: frame the whole model via bounding box
-  const box = new Box3().setFromObject(vrm.scene);
+  const box = new Box3().setFromObject(vrm.scene as Object3D);
   if (!isFinite(box.min.length()) || !isFinite(box.max.length())) {
     controls.target.set(0, 1.4, 0);
     camera.position.set(0, 1.4, 2.0);
