@@ -140,20 +140,6 @@ dotnet run
 
 ---
 
-## 🐳 Optional: Run with Docker
-~~~~bash
-docker-compose up --build
-~~~~
-*(Requires Docker Desktop)*
-
----
-
-## 🔐 Security Notes
-- All external inputs are validated before processing
-- No hard‑coded secrets — use `.env` files (excluded from Git)
-- WebSocket communication is encrypted (WSS)
-- Modular architecture allows for isolated security audits
-
 ---
 
 ## 🤝 Contributing
