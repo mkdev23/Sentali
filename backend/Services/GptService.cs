@@ -2,104 +2,117 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Azure.Core;
 using Azure.Identity;
 
 public class GptService
 {
-    private readonly HttpClient _http;
     private readonly string _agentId;
-    private readonly string _projectName;
-    private readonly string _endpoint;
+    private readonly string _projectEndpoint;
+    private readonly HttpClient _http;
 
     public GptService(IConfiguration config)
     {
+        _agentId = config["AZURE_AI_AGENT_ID"] 
+            ?? throw new Exception("Missing AZURE_AI_AGENT_ID");
+        _projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"] 
+            ?? throw new Exception("Missing AZURE_AI_PROJECT_ENDPOINT");
         _http = new HttpClient();
-        _agentId = config["AZURE_AI_AGENT_ID"] ?? throw new Exception("Missing AZURE_AI_AGENT_ID");
-        _projectName = config["AZURE_AI_PROJECT_NAME"] ?? throw new Exception("Missing AZURE_AI_PROJECT_NAME");
-        _endpoint = config["AZURE_AI_PROJECT_ENDPOINT"] ?? throw new Exception("Missing AZURE_AI_PROJECT_ENDPOINT");
     }
 
     public async Task<string> GetResponse(string input)
     {
-        try
+        // 1. Acquire token with Managed Identity
+        var credential = new DefaultAzureCredential();
+        var token = await credential.GetTokenAsync(
+            new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" })
+        );
+        _http.DefaultRequestHeaders.Authorization = 
+            new AuthenticationHeaderValue("Bearer", token.Token);
+
+        Console.WriteLine($"[Agent REST] Endpoint: {_projectEndpoint}");
+        Console.WriteLine($"[Agent REST] AgentId: {_agentId}");
+
+        // 2. Get Agent (optional, just to confirm connectivity)
+        var agentRes = await _http.GetAsync(
+            $"{_projectEndpoint}/agents/{_agentId}?api-version=2024-10-01-preview");
+        var agentJson = await agentRes.Content.ReadAsStringAsync();
+        agentRes.EnsureSuccessStatusCode();
+        Console.WriteLine($"[Agent REST] Agent: {agentJson}");
+
+        // 3. Create Thread
+        var threadRes = await _http.PostAsync(
+            $"{_projectEndpoint}/agents/threads?api-version=2024-10-01-preview",
+            new StringContent("{}", Encoding.UTF8, "application/json"));
+        var threadJson = await threadRes.Content.ReadAsStringAsync();
+        threadRes.EnsureSuccessStatusCode();
+        var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString();
+        Console.WriteLine($"[Agent REST] ThreadId: {threadId}");
+
+        // 4. Create Message
+        var msgPayload = JsonSerializer.Serialize(new
         {
-            Console.WriteLine($"[Agent] Endpoint: {_endpoint}");
-            Console.WriteLine($"[Agent] Project: {_projectName}");
-            Console.WriteLine($"[Agent] AgentId: {_agentId}");
+            role = "user",
+            content = input
+        });
+        var msgRes = await _http.PostAsync(
+            $"{_projectEndpoint}/agents/threads/{threadId}/messages?api-version=2024-10-01-preview",
+            new StringContent(msgPayload, Encoding.UTF8, "application/json"));
+        msgRes.EnsureSuccessStatusCode();
+        Console.WriteLine($"[Agent REST] Sent message: {input}");
 
-            var credential = new DefaultAzureCredential();
-            var token = await credential.GetTokenAsync(
-                new Azure.Core.TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" })
-            );
-            Console.WriteLine($"[Agent] Token acquired: {token.Token.Substring(0, 20)}...");
+        // 5. Create Run
+        var runPayload = JsonSerializer.Serialize(new { assistant_id = _agentId });
+        var runRes = await _http.PostAsync(
+            $"{_projectEndpoint}/agents/threads/{threadId}/runs?api-version=2024-10-01-preview",
+            new StringContent(runPayload, Encoding.UTF8, "application/json"));
+        var runJson = await runRes.Content.ReadAsStringAsync();
+        runRes.EnsureSuccessStatusCode();
+        var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString();
+        Console.WriteLine($"[Agent REST] RunId: {runId}");
 
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
-
-            // Create thread
-            var threadRes = await _http.PostAsync(
-                $"{_endpoint}/api/projects/{_projectName}/threads",
-                new StringContent("{}", Encoding.UTF8, "application/json")
-            );
-            var threadBody = await threadRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Agent] Create thread: {threadRes.StatusCode} {threadBody}");
-            threadRes.EnsureSuccessStatusCode();
-            var threadId = JsonDocument.Parse(threadBody).RootElement.GetProperty("id").GetString();
-
-            // Send message
-            var messagePayload = JsonSerializer.Serialize(new { role = "user", content = input });
-            var msgRes = await _http.PostAsync(
-                $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/messages",
-                new StringContent(messagePayload, Encoding.UTF8, "application/json")
-            );
-            var msgBody = await msgRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Agent] Send message: {msgRes.StatusCode} {msgBody}");
-            msgRes.EnsureSuccessStatusCode();
-
-            // Run agent
-            var runPayload = JsonSerializer.Serialize(new { agentId = _agentId });
-            var runRes = await _http.PostAsync(
-                $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/runs",
-                new StringContent(runPayload, Encoding.UTF8, "application/json")
-            );
-            var runBody = await runRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Agent] Run agent: {runRes.StatusCode} {runBody}");
-            runRes.EnsureSuccessStatusCode();
-            var runId = JsonDocument.Parse(runBody).RootElement.GetProperty("id").GetString();
-
-            // Poll until complete
-            while (true)
-            {
-                var statusRes = await _http.GetAsync(
-                    $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/runs/{runId}"
-                );
-                var statusBody = await statusRes.Content.ReadAsStringAsync();
-                var status = JsonDocument.Parse(statusBody).RootElement.GetProperty("status").GetString();
-                Console.WriteLine($"[Agent] Poll status: {statusRes.StatusCode} {status}");
-                if (status == "completed") break;
-                if (status == "failed") throw new Exception("Agent run failed");
-                await Task.Delay(500);
-            }
-
-            // Get messages
-            var messagesRes = await _http.GetAsync(
-                $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/messages"
-            );
-            var messagesBody = await messagesRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Agent] Get messages: {messagesRes.StatusCode} {messagesBody}");
-            messagesRes.EnsureSuccessStatusCode();
-
-            foreach (var msg in JsonDocument.Parse(messagesBody).RootElement.EnumerateArray())
-            {
-                if (msg.GetProperty("role").GetString() == "assistant")
-                    return msg.GetProperty("content").GetString() ?? "[No response]";
-            }
-
-            return "[No assistant message found]";
-        }
-        catch (Exception ex)
+        // 6. Poll until complete
+        string status;
+        do
         {
-            Console.WriteLine($"[Agent ERROR] {ex}");
-            throw; // Let TtsController handle returning JSON error
+            await Task.Delay(1000);
+            var statusRes = await _http.GetAsync(
+                $"{_projectEndpoint}/agents/threads/{threadId}/runs/{runId}?api-version=2024-10-01-preview");
+            var statusJson = await statusRes.Content.ReadAsStringAsync();
+            status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString();
+            Console.WriteLine($"[Agent REST] Run status: {status}");
+            if (status == "failed")
+            {
+                var err = JsonDocument.Parse(statusJson).RootElement
+                    .GetProperty("last_error").GetProperty("message").GetString();
+                throw new Exception($"Agent run failed: {err}");
+            }
         }
+        while (status == "queued" || status == "in_progress");
+
+        // 7. Get Messages
+        var messagesRes = await _http.GetAsync(
+            $"{_projectEndpoint}/agents/threads/{threadId}/messages?order=asc&api-version=2024-10-01-preview");
+        var messagesJson = await messagesRes.Content.ReadAsStringAsync();
+        messagesRes.EnsureSuccessStatusCode();
+
+        foreach (var msg in JsonDocument.Parse(messagesJson).RootElement.EnumerateArray())
+        {
+            if (msg.GetProperty("role").GetString() == "assistant")
+            {
+                var contentArray = msg.GetProperty("content").EnumerateArray();
+                foreach (var contentItem in contentArray)
+                {
+                    if (contentItem.GetProperty("type").GetString() == "text")
+                    {
+                        var text = contentItem.GetProperty("text").GetProperty("value").GetString();
+                        Console.WriteLine($"[Agent REST] Assistant reply: {text}");
+                        return text ?? "[No response text]";
+                    }
+                }
+            }
+        }
+
+        return "[No assistant message found]";
     }
 }
