@@ -1,40 +1,78 @@
 using Microsoft.AspNetCore.Mvc;
 using SentaliApp.Services;
 
-namespace SentaliApp.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class TtsController : ControllerBase
+namespace SentaliApp.Controllers
 {
-    private readonly GptService _gpt;
-    private readonly SentimentService _sentiment;
-    private readonly TtsService _tts;
-    private readonly BlobStorageService _blob;
-
-    public TtsController(GptService gpt, SentimentService sentiment, TtsService tts, BlobStorageService blob)
+    [ApiController]
+    public class TtsController : ControllerBase
     {
-        _gpt = gpt;
-        _sentiment = sentiment;
-        _tts = tts;
-        _blob = blob;
-    }
+        private readonly GptService _gpt;
+        private readonly TtsService _tts;
+        private readonly SentimentService _sentiment;
+        private readonly IWebHostEnvironment _env;
+        private readonly WsHub _ws;
 
-    [HttpPost]
-    public async Task<IActionResult> Post([FromBody] string userInput)
-    {
-        var gptResponse = await _gpt.GetResponse(userInput);
-        var sentiment = await _sentiment.GetSentiment(userInput);
-        var expression = sentiment switch
+        public TtsController(
+            GptService gpt,
+            TtsService tts,
+            SentimentService sentiment,
+            IWebHostEnvironment env,
+            WsHub ws)
         {
-            "Positive" => "smile",
-            "Negative" => "frown",
-            _ => "neutral"
-        };
+            _gpt = gpt;
+            _tts = tts;
+            _sentiment = sentiment;
+            _env = env;
+            _ws = ws;
+        }
 
-        var audioBytes = await _tts.Synthesize(gptResponse);
-        var sasUrl = await _blob.UploadAndGetSas(audioBytes);
+        [HttpPost("api/tts")]
+        public async Task<IActionResult> Tts([FromBody] string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return BadRequest(new { error = "No text provided" });
 
-        return Ok(new { text = gptResponse, sentiment, expression, audioUrl = sasUrl });
+            try
+            {
+                // 1. Get Agent reply
+                var reply = await _gpt.GetResponse(text);
+
+                // 2. Determine sentiment → expression
+                var sentiment = await _sentiment.GetSentiment(reply);
+                var expression = sentiment switch
+                {
+                    "Positive" => "joy",
+                    "Negative" => "angry",
+                    "Neutral"  => "neutral",
+                    _          => "neutral"
+                };
+
+                // 3. Generate audio
+                var audioBytes = await _tts.Synthesize(reply);
+
+                // 4. Save to wwwroot/tts/output.mp3
+                var ttsDir = Path.Combine(_env.WebRootPath ?? "wwwroot", "tts");
+                Directory.CreateDirectory(ttsDir);
+                var outputPath = Path.Combine(ttsDir, "output.mp3");
+                await System.IO.File.WriteAllBytesAsync(outputPath, audioBytes);
+
+                // 5. Broadcast to WS clients
+                var publicUrl = $"/tts/output.mp3?v={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+                _ws.Broadcast(new
+                {
+                    type = "blendshapes",
+                    values = new Dictionary<string, double> { { expression, 1.0 } },
+                    audio = publicUrl
+                });
+
+                // 6. Return JSON to frontend
+                return Ok(new { text = reply, audio = publicUrl, expression, sentiment });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[TTS ERROR] {ex}");
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
     }
 }
