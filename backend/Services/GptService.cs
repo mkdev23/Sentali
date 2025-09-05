@@ -33,16 +33,16 @@ public class GptService
         Console.WriteLine($"[Agent REST] Endpoint: {_projectEndpoint}");
         Console.WriteLine($"[Agent REST] AgentId: {_agentId}");
 
-        // 2. Get Agent (optional, just to confirm connectivity)
-        var agentRes = await _http.GetAsync(
-            $"{_projectEndpoint}/agents/{_agentId}?api-version=2024-10-01-preview");
+        // 2. Get Agent
+        var agentUrl = $"{_projectEndpoint}/agents/{_agentId}?api-version=2024-10-01-preview";
+        var agentRes = await _http.GetAsync(agentUrl);
         var agentJson = await agentRes.Content.ReadAsStringAsync();
         agentRes.EnsureSuccessStatusCode();
         Console.WriteLine($"[Agent REST] Agent: {agentJson}");
 
         // 3. Create Thread
-        var threadRes = await _http.PostAsync(
-            $"{_projectEndpoint}/agents/threads?api-version=2024-10-01-preview",
+        var threadUrl = $"{_projectEndpoint}/threads?api-version=2024-10-01-preview";
+        var threadRes = await _http.PostAsync(threadUrl, 
             new StringContent("{}", Encoding.UTF8, "application/json"));
         var threadJson = await threadRes.Content.ReadAsStringAsync();
         threadRes.EnsureSuccessStatusCode();
@@ -50,21 +50,21 @@ public class GptService
         Console.WriteLine($"[Agent REST] ThreadId: {threadId}");
 
         // 4. Create Message
+        var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version=2024-10-01-preview";
         var msgPayload = JsonSerializer.Serialize(new
         {
             role = "user",
             content = input
         });
-        var msgRes = await _http.PostAsync(
-            $"{_projectEndpoint}/agents/threads/{threadId}/messages?api-version=2024-10-01-preview",
+        var msgRes = await _http.PostAsync(msgUrl, 
             new StringContent(msgPayload, Encoding.UTF8, "application/json"));
         msgRes.EnsureSuccessStatusCode();
         Console.WriteLine($"[Agent REST] Sent message: {input}");
 
         // 5. Create Run
+        var runUrl = $"{_projectEndpoint}/threads/{threadId}/runs?api-version=2024-10-01-preview";
         var runPayload = JsonSerializer.Serialize(new { assistant_id = _agentId });
-        var runRes = await _http.PostAsync(
-            $"{_projectEndpoint}/agents/threads/{threadId}/runs?api-version=2024-10-01-preview",
+        var runRes = await _http.PostAsync(runUrl, 
             new StringContent(runPayload, Encoding.UTF8, "application/json"));
         var runJson = await runRes.Content.ReadAsStringAsync();
         runRes.EnsureSuccessStatusCode();
@@ -76,8 +76,8 @@ public class GptService
         do
         {
             await Task.Delay(1000);
-            var statusRes = await _http.GetAsync(
-                $"{_projectEndpoint}/agents/threads/{threadId}/runs/{runId}?api-version=2024-10-01-preview");
+            var statusUrl = $"{_projectEndpoint}/threads/{threadId}/runs/{runId}?api-version=2024-10-01-preview";
+            var statusRes = await _http.GetAsync(statusUrl);
             var statusJson = await statusRes.Content.ReadAsStringAsync();
             status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString();
             Console.WriteLine($"[Agent REST] Run status: {status}");
@@ -91,8 +91,8 @@ public class GptService
         while (status == "queued" || status == "in_progress");
 
         // 7. Get Messages
-        var messagesRes = await _http.GetAsync(
-            $"{_projectEndpoint}/agents/threads/{threadId}/messages?order=asc&api-version=2024-10-01-preview");
+        var messagesUrl = $"{_projectEndpoint}/threads/{threadId}/messages?order=asc&api-version=2024-10-01-preview";
+        var messagesRes = await _http.GetAsync(messagesUrl);
         var messagesJson = await messagesRes.Content.ReadAsStringAsync();
         messagesRes.EnsureSuccessStatusCode();
 
@@ -100,8 +100,7 @@ public class GptService
         {
             if (msg.GetProperty("role").GetString() == "assistant")
             {
-                var contentArray = msg.GetProperty("content").EnumerateArray();
-                foreach (var contentItem in contentArray)
+                foreach (var contentItem in msg.GetProperty("content").EnumerateArray())
                 {
                     if (contentItem.GetProperty("type").GetString() == "text")
                     {
