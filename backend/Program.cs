@@ -131,7 +131,8 @@ app.MapPost("/api/tts", async (
 
     return Results.Ok(new { text = gptResponse, sentiment = sent, expression, audioUrl = sasUrl });
 });
-
+app.MapGet("/health", () => Results.Ok("App is running"));
 // Bind to Azure's assigned port in production
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8123";
-app.Run($"http://0.0.0.0:{port}");
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://*:{port}");
+app.Run();
