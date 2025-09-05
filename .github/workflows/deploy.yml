@@ -28,7 +28,7 @@ jobs:
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     - name: Publish .NET app
-      run: dotnet publish backend/SENTAIAPP.csproj -c Release -o ./publish
+      run: dotnet publish backend/SentaliApp.csproj -c Release -o ./publish
 
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v3
