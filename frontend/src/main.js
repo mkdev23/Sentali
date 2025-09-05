@@ -294,13 +294,6 @@ function initUIBindings() {
 initUIBindings();
 
 
-function handleBreath() {
-  const chest = currentVRM?.humanoid?.getNormalizedBoneNode('chest');
-  if (chest) {
-    chest.position.y = Math.sin(clock.elapsedTime * 1.5) * 0.005;
-  }
-}
-
 // ---------- Animation loop ----------
 function animate() {
   requestAnimationFrame(animate);
