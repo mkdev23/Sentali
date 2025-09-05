@@ -1,98 +1,105 @@
-using Fleck;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 
-public class WsHub
+namespace SentaliApp.Services
 {
-    private readonly List<IWebSocketConnection> _clients = new();
-    private readonly object _lock = new();
-
-    // Map indices to expression names for VRM
-    private static readonly string[] BlendshapeNames = {
-        "aa", "ih", "ou", "ee", "oh",
-        "happy", "angry", "sad", "relaxed", "neutral", "blink", "joy"
-    };
-
-    public WsHub(string url = "ws://0.0.0.0:8123")
+    public class WsHub
     {
-        var server = new WebSocketServer(url);
-        server.Start(socket =>
+        private readonly List<WebSocket> _clients = new();
+        private readonly object _lock = new();
+
+        private static readonly string[] BlendshapeNames = {
+            "aa", "ih", "ou", "ee", "oh",
+            "happy", "angry", "sad", "relaxed", "neutral", "blink", "joy"
+        };
+
+        public async Task HandleClientAsync(WebSocket socket)
         {
-            socket.OnOpen = () =>
+            lock (_lock) _clients.Add(socket);
+            Console.WriteLine("[WS] client connected");
+
+            await Send(socket, new { type = "hello", msg = "connected" });
+            Broadcast(new { type = "blendshape", name = "joy", weight = 1.0 });
+
+            var buffer = new byte[1024 * 4];
+            try
             {
-                lock (_lock) _clients.Add(socket);
-                socket.Send(JsonSerializer.Serialize(new { type = "hello", msg = "connected" }));
-                Console.WriteLine("[WS] client connected");
+                while (socket.State == WebSocketState.Open)
+                {
+                    var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        break;
+                    }
 
-                // Local test cue – remove when Azure pipeline is wired
-                Broadcast(new { type = "blendshape", name = "joy", weight = 1.0 });
-                Console.WriteLine("[WS] Sent test blendshape cue: joy=1.0");
-            };
+                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    Console.WriteLine("[WS] Received: " + message);
 
-            socket.OnClose = () =>
+                    // Echo back for now
+                    await Send(socket, new { type = "echo", msg = message });
+                }
+            }
+            catch (Exception ex)
             {
-                lock (_lock) _clients.Remove(socket);
-                Console.WriteLine("[WS] client disconnected");
-            };
+                Console.WriteLine("[WS] error: " + ex.Message);
+            }
 
-            socket.OnError = (ex) =>
+            lock (_lock) _clients.Remove(socket);
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+            Console.WriteLine("[WS] client disconnected");
+        }
+
+        private async Task Send(WebSocket socket, object payload)
+        {
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {
-                Console.WriteLine($"[WS] error: {ex?.Message}");
-            };
-        });
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
-        Console.WriteLine($"[WS] Listening on {url}");
-    }
+            var bytes = Encoding.UTF8.GetBytes(json);
+            await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+        }
 
-    public void Broadcast(object payload)
-    {
-        string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        public void Broadcast(object payload)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
-        List<IWebSocketConnection> snapshot;
-        lock (_lock) snapshot = _clients.ToList();
-        foreach (var c in snapshot) c.Send(json);
-    }
+            var bytes = Encoding.UTF8.GetBytes(json);
+            List<WebSocket> snapshot;
+            lock (_lock) snapshot = _clients.ToList();
 
-    // Send cue with expression name + weight
-    public void SendBlendshape(string name, double weight)
-    {
-        Broadcast(new
+            foreach (var socket in snapshot)
+            {
+                if (socket.State == WebSocketState.Open)
+                {
+                    socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                }
+            }
+        }
+
+        public void SendBlendshape(string name, double weight)
         {
-            type = "blendshape",
-            name,
-            weight
-        });
-    }
+            Broadcast(new { type = "blendshape", name, weight });
+        }
 
-    // Send cue with index + value (auto-maps to name)
-    public void SendBlendshape(int index, double value)
-    {
-        if (index < 0 || index >= BlendshapeNames.Length) return;
-        SendBlendshape(BlendshapeNames[index], value);
-    }
-
-    // Send multiple blendshapes at once
-    public void SendBlendshapes(Dictionary<string, double> values)
-    {
-        Broadcast(new
+        public void SendBlendshape(int index, double value)
         {
-            type = "blendshapes",
-            values
-        });
-    }
+            if (index < 0 || index >= BlendshapeNames.Length) return;
+            SendBlendshape(BlendshapeNames[index], value);
+        }
 
-    // Optional: cue with timing metadata
-    public void BroadcastCue(string expression, double intensity, double? duration, double atSeconds)
-    {
-        Broadcast(new
+        public void SendBlendshapes(Dictionary<string, double> values)
         {
-            type = "cue",
-            expression,
-            intensity,
-            duration,
-            timestamp = atSeconds
-        });
+            Broadcast(new { type = "blendshapes", values });
+        }
+
+        public void BroadcastCue(string expression, double intensity, double? duration, double atSeconds)
+        {
+            Broadcast(new { type = "cue", expression, intensity, duration, timestamp = atSeconds });
+        }
     }
 }

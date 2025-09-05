@@ -1,4 +1,4 @@
-name: Build and Deploy Backend to Azure
+name: Build Frontend + Deploy Backend to Azure
 
 on:
   push:
@@ -12,14 +12,26 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
+    # 1. Checkout repo
     - name: Checkout
       uses: actions/checkout@v4
 
+    # 2. Build frontend
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+        mkdir -p ../backend/wwwroot
+        cp -r dist/* ../backend/wwwroot/
+
+    # 3. Setup .NET
     - name: Setup .NET 9
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
 
+    # 4. Login to Azure with OIDC
     - name: Login to Azure with OIDC
       uses: azure/login@v2
       with:
@@ -27,9 +39,11 @@ jobs:
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+    # 5. Publish backend
     - name: Publish .NET app
       run: dotnet publish backend/SentaliApp.csproj -c Release -o ./publish
 
+    # 6. Deploy to Azure Web App
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v3
       with:

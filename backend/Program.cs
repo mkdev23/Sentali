@@ -3,34 +3,30 @@ using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Azure.Identity;
 using Azure.AI.OpenAI;
-using OpenAI.Chat; // <-- Needed for ChatClient
+using OpenAI.Chat;
 using SentaliApp.Services;
 using SentaliApp.SystemMessages;
 using Microsoft.AspNetCore.Mvc;
-
-
 
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// CORS for local frontend
+// CORS for local frontend dev
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontendDev", policy =>
     {
         policy.WithOrigins("http://localhost:5173")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
 // WebSocket hub
-var wsHub = new WsHub("ws://0.0.0.0:8124");
+var wsHub = new WsHub();
 builder.Services.AddSingleton(wsHub);
-
-// Existing speech service
-builder.Services.AddSingleton<AzureSpeechService>();
 
 // Azure + pipeline services
 builder.Services.AddSingleton(new DefaultAzureCredential());
@@ -48,20 +44,30 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<SentimentService>();
 builder.Services.AddSingleton<TtsService>();
 builder.Services.AddSingleton<BlobStorageService>();
+builder.Services.AddSingleton<AzureSpeechService>();
 
 var app = builder.Build();
 
-app.UseCors("AllowFrontendDev");
+// Use CORS in dev only
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("AllowFrontendDev");
+}
 
-// Static file provider for mp3
+// Static file provider with VRM + HDR MIME mapping
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".mp3"] = "audio/mpeg";
+provider.Mappings[".vrm"] = "application/octet-stream";
+provider.Mappings[".hdr"] = "image/vnd.radiance";
 
-// Serve default wwwroot
+// Serve frontend from wwwroot
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = provider
+});
 
-// Serve /tts with CORS
+// Serve /tts folder with CORS for dev
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(
@@ -70,9 +76,30 @@ app.UseStaticFiles(new StaticFileOptions
     ContentTypeProvider = provider,
     OnPrepareResponse = ctx =>
     {
-        ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "http://localhost:5173";
-        ctx.Context.Response.Headers["Vary"] = "Origin";
+        if (app.Environment.IsDevelopment())
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "http://localhost:5173";
+            ctx.Context.Response.Headers["Vary"] = "Origin";
+        }
     }
+});
+
+// Map WebSocket endpoint at /ws
+app.Map("/ws", wsApp =>
+{
+    wsApp.UseWebSockets();
+    wsApp.Run(async context =>
+    {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            var socket = await context.WebSockets.AcceptWebSocketAsync();
+            await wsHub.HandleClientAsync(socket);
+        }
+        else
+        {
+            context.Response.StatusCode = 400;
+        }
+    });
 });
 
 // Existing viseme endpoint
@@ -82,7 +109,7 @@ app.MapGet("/speak", async (AzureSpeechService tts, string text, string expressi
     return Results.Ok(new { status = "queued", text, expression });
 });
 
-// New secure GPT→Sentiment→TTS→Blob endpoint
+// Secure GPT→Sentiment→TTS→Blob endpoint
 app.MapPost("/api/tts", async (
     GptService gpt,
     SentimentService sentiment,
@@ -105,4 +132,6 @@ app.MapPost("/api/tts", async (
     return Results.Ok(new { text = gptResponse, sentiment = sent, expression, audioUrl = sasUrl });
 });
 
-app.Run("http://0.0.0.0:8123");
+// Bind to Azure's assigned port in production
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8123";
+app.Run($"http://0.0.0.0:{port}");
