@@ -6,12 +6,10 @@ import { loadHDRSkybox } from './SkyboxLoader.js';
 import { WSClient } from './ws.js';
 import { BlendfacesController } from './blendfaces.js';
 
-const overlay = document.getElementById('overlay');
 const blendfacesToggle = document.getElementById('blendfacesToggle');
-// Use same-origin for API
+const backendBase = '';
 
-
-
+/* === Scene setup === */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
 camera.position.set(0, 1.4, 1.5);
@@ -43,15 +41,13 @@ let currentVRM;
 let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
-const backendBase = '';
 
-// Load VRM
+/* === Load VRM === */
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   currentVRM = vrm;
   vrm.scene.rotation.y = Math.PI;
   controls.target.set(0, 1.4, 0);
   controls.update();
-  overlay && (overlay.textContent = '✅ VRM loaded — waiting for WS data...');
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
@@ -65,7 +61,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   });
 });
 
-// Persistent expression state
+/* === Expression handling === */
 const activeExpressions = {};
 const DECAY_RATE_EMOTION = 3.0;
 const DECAY_RATE_VISEME = 10.0;
@@ -104,43 +100,34 @@ function shouldUseBlendfaces() {
   return !!blendfaces && (!!blendfacesToggle ? blendfacesToggle.checked : true);
 }
 
-// WS client
+/* === WebSocket client === */
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
-
-
-  onOpen: () => overlay && (overlay.textContent = '✅ WS connected — waiting for cues...'),
-
+  onOpen: () => console.log('✅ WS connected — waiting for cues...'),
   onMessage: async (data) => {
     console.log("[WS RAW]", JSON.stringify(data));
 
     if (data?.type === 'blendshape') {
       setExpressionPersistent(data.name, typeof data.weight === 'number' ? data.weight : 1.0, DECAY_RATE_EMOTION);
     }
-
     if (data?.type === 'blendshapes') {
       for (const [name, weight] of Object.entries(data.values)) {
         setExpressionPersistent(name, Number(weight), DECAY_RATE_EMOTION);
       }
     }
-
-      if (data?.type === 'viseme') {
-        const mapped = expressionMap[data.name] ?? data.name;
-        if (currentVRM?.expressionManager) {
-          currentVRM.expressionManager.setValue(mapped, data.weight ?? 1.0);
-          currentVRM.expressionManager.update();
-        } else if (currentVRM?.blendShapeProxy) {
-          currentVRM.blendShapeProxy.setValue(mapped, data.weight ?? 1.0);
-          currentVRM.blendShapeProxy.update();
-        }
+    if (data?.type === 'viseme') {
+      const mapped = expressionMap[data.name] ?? data.name;
+      if (currentVRM?.expressionManager) {
+        currentVRM.expressionManager.setValue(mapped, data.weight ?? 1.0);
+        currentVRM.expressionManager.update();
+      } else if (currentVRM?.blendShapeProxy) {
+        currentVRM.blendShapeProxy.setValue(mapped, data.weight ?? 1.0);
+        currentVRM.blendShapeProxy.update();
       }
-
-
-
+    }
     if (data?.audio) {
       try {
         const audioUrl = data.audio.startsWith('/') ? `${backendBase}${data.audio}` : data.audio;
-        console.log("[AUDIO] Playing:", audioUrl);
         const audio = new Audio(audioUrl);
         audio.crossOrigin = 'anonymous';
         await audio.play();
@@ -149,47 +136,11 @@ const wsClient = new WSClient({
       }
     }
   },
-
-  onClose: () => overlay && (overlay.textContent = '❌ WS disconnected')
+  onClose: () => console.log('❌ WS disconnected')
 });
-
 wsClient.connect();
 
-// Speak trigger
-async function triggerSpeak(text = "Hello Julius, this is Sentali speaking.", expression = "joy") {
-  try {
-    const url = `${backendBase}/speak?text=${encodeURIComponent(text)}&expression=${encodeURIComponent(expression)}`;
-    console.log("[TEST SPEAK] Calling:", url);
-    const res = await fetch(url);
-    const json = await res.json();
-    console.log("[TEST SPEAK] Response:", json);
-  } catch (err) {
-    console.error("[TEST SPEAK] Error:", err);
-  }
-}
-
-window.testSpeak = triggerSpeak;
-
-// Simulate cue
-window.simulateCue = async (name = 'joy', weight = 1.0, audioPath = null) => {
-  console.log("[SIM] Simulating cue:", name, weight, audioPath);
-  const isViseme = ['aa', 'ee', 'ih', 'oh', 'ou'].includes(name);
-  setExpressionPersistent(name, weight, isViseme ? DECAY_RATE_VISEME : DECAY_RATE_EMOTION);
-
-  if (audioPath) {
-    try {
-      const url = audioPath.startsWith('/') ? `${backendBase}${audioPath}` : audioPath;
-      const audio = new Audio(url);
-      audio.crossOrigin = 'anonymous';
-      await audio.play();
-      console.log("[SIM] Playing audio:", url);
-    } catch (err) {
-      console.warn("[SIM] Failed to play audio:", audioPath, err);
-    }
-  }
-};
-
-// === Ambient behaviours ===
+/* === Ambient behaviours === */
 let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
@@ -221,7 +172,7 @@ function handleBreath() {
   }
 }
 
-// === Chat + Agent integration ===
+/* === Chat + Agent integration === */
 async function sendToAgent() {
   const inputEl = document.getElementById("agentInput");
   const input = inputEl.value.trim();
@@ -253,7 +204,7 @@ function addChatEntry(role, text) {
   log.scrollTop = log.scrollHeight;
 }
 
-// === Mic button speech-to-text ===
+/* === Mic button speech-to-text === */
 function initMicButton() {
   const micBtn = document.getElementById("micBtn");
   if (!('webkitSpeechRecognition' in window)) {
@@ -261,7 +212,6 @@ function initMicButton() {
     micBtn.title = "Speech recognition not supported in this browser.";
     return;
   }
-
   micBtn.addEventListener("click", () => {
     const recognition = new webkitSpeechRecognition();
     recognition.lang = "en-US";
@@ -276,13 +226,22 @@ function initMicButton() {
 
     recognition.onerror = (err) => {
       console.error("[Mic Error]", err);
+      addChatEntry("agent", "[Mic error: " + err.error + "]");
+    };
+
+    recognition.onstart = () => {
+      console.log("[Mic] Listening...");
+    };
+
+    recognition.onend = () => {
+      console.log("[Mic] Stopped listening");
     };
 
     recognition.start();
   });
 }
 
-// === Wire up UI events ===
+/* === Wire up UI events === */
 function initUIBindings() {
   document.getElementById("agentSendBtn")
     .addEventListener("click", sendToAgent);
@@ -293,15 +252,14 @@ function initUIBindings() {
 // Call this once after DOM is ready
 initUIBindings();
 
-
-// ---------- Animation loop ----------
+/* ---------- Animation loop ---------- */
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
 
   if (currentVRM) {
     currentVRM.update(delta);
-    applyExpressions(delta); // apply all active expressions/visemes each frame
+    applyExpressions(delta);
     handleBlink(delta);
     handleGaze(delta);
     handleBreath();
@@ -313,7 +271,7 @@ function animate() {
 }
 animate();
 
-// ---------- Resize ----------
+/* ---------- Resize ---------- */
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();

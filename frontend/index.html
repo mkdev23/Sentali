@@ -12,21 +12,21 @@
       padding: 0;
       background: #111;
       font-family: sans-serif;
+      overflow: hidden;
     }
 
-    /* Control panel */
+    /* Top-left controls */
     #control-panel {
       position: fixed;
       top: 12px;
       left: 12px;
       z-index: 10;
       background: rgba(0,0,0,0.65);
-      padding: 10px;
+      padding: 8px;
       border-radius: 8px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      width: 280px;
+      gap: 6px;
     }
 
     button {
@@ -41,9 +41,38 @@
     }
     button:hover { background: #1565c0; }
 
-    #agent-ui {
+    label { color: white; font-size: 14px; }
+
+    /* Chat log above chat bar */
+    #chat-log {
+      position: fixed;
+      bottom: 48px;
+      left: 0;
+      width: 100%;
+      max-height: 150px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.5);
+      padding: 6px;
+      font-size: 13px;
+      color: #ddd;
+      z-index: 9;
+    }
+    .chat-entry { margin-bottom: 4px; }
+    .chat-user { color: #90caf9; }
+    .chat-agent { color: #a5d6a7; }
+
+    /* Bottom chat bar */
+    #chat-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0,0,0,0.75);
+      padding: 8px;
       display: flex;
       gap: 6px;
+      align-items: center;
+      z-index: 10;
     }
 
     #agentInput {
@@ -54,91 +83,33 @@
       background: #222;
       color: white;
     }
-
-    #blendfacesToggle { margin-right: 4px; }
-    label { color: white; font-size: 14px; }
-
-    /* Chat log */
-    #chat-log {
-      background: rgba(255,255,255,0.05);
-      border-radius: 4px;
-      padding: 6px;
-      max-height: 150px;
-      overflow-y: auto;
-      font-size: 13px;
-      color: #ddd;
-    }
-    .chat-entry { margin-bottom: 4px; }
-    .chat-user { color: #90caf9; }
-    .chat-agent { color: #a5d6a7; }
   </style>
 </head>
 <body>
+  <!-- Top-left controls -->
   <div id="control-panel">
     <button id="speakTestBtn">Test Speak</button>
     <button id="test">Local Test (aa)</button>
     <button id="unlockAudio">Enable Audio</button>
-
     <label>
       <input type="checkbox" id="blendfacesToggle" checked />
       Use Blendfaces
     </label>
-
-    <div id="agent-ui">
-      <input type="text" id="agentInput" placeholder="Ask Sentali..." />
-      <button onclick="sendToAgent()">Send</button>
-      <button id="micBtn" title="Speak to Sentali">🎤</button>
-    </div>
-
-    <div id="chat-log"></div>
   </div>
 
+  <!-- Chat log -->
+  <div id="chat-log"></div>
+
+  <!-- Bottom chat bar -->
+  <div id="chat-bar">
+    <input type="text" id="agentInput" placeholder="Ask Sentali..." />
+    <button id="agentSendBtn">Send</button>
+    <button id="micBtn" title="Speak to Sentali">🎤</button>
+  </div>
+
+  <!-- VRM canvas -->
   <canvas id="c"></canvas>
+
   <script type="module" src="/src/main.js"></script>
-
-  <script>
-    async function sendToAgent() {
-      const input = document.getElementById("agentInput").value.trim();
-      if (!input) return;
-      addChatEntry("user", input);
-      document.getElementById("agentInput").value = "";
-
-      const res = await fetch(`/api/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input)
-      });
-      const json = await res.json();
-      addChatEntry("agent", json.text || "[No response]");
-    }
-
-    function addChatEntry(role, text) {
-      const log = document.getElementById("chat-log");
-      const div = document.createElement("div");
-      div.className = "chat-entry";
-      div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
-      log.appendChild(div);
-      log.scrollTop = log.scrollHeight;
-    }
-
-    // Mic button speech-to-text
-    document.getElementById("micBtn").addEventListener("click", () => {
-      if (!('webkitSpeechRecognition' in window)) {
-        alert("Speech recognition not supported in this browser.");
-        return;
-      }
-      const recognition = new webkitSpeechRecognition();
-      recognition.lang = "en-US";
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        document.getElementById("agentInput").value = transcript;
-        sendToAgent();
-      };
-      recognition.start();
-    });
-  </script>
 </body>
 </html>
