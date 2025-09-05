@@ -34,11 +34,11 @@ public class GptService
         Console.WriteLine($"[Agent REST] AgentId: {_agentId}");
 
         // 2. Get Agent
-        var agentUrl = $"{_projectEndpoint}/agents/{_agentId}?api-version=2024-10-01-preview";
-        var agentRes = await _http.GetAsync(agentUrl);
-        var agentJson = await agentRes.Content.ReadAsStringAsync();
-        agentRes.EnsureSuccessStatusCode();
-        Console.WriteLine($"[Agent REST] Agent: {agentJson}");
+        var listAgentsUrl = $"{_projectEndpoint}/agents?api-version=2024-10-01-preview";
+        var listRes = await _http.GetAsync(listAgentsUrl);
+        var listJson = await listRes.Content.ReadAsStringAsync();
+        listRes.EnsureSuccessStatusCode();
+        Console.WriteLine($"[Agent REST] Agents list: {listJson}");
 
         // 3. Create Thread
         var threadUrl = $"{_projectEndpoint}/threads?api-version=2024-10-01-preview";
