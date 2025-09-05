@@ -35,15 +35,11 @@ public class GptService
             $"{_endpoint}/api/projects/{_projectName}/threads",
             new StringContent("{}", Encoding.UTF8, "application/json")
         );
-        var threadJson = await threadRes.Content.ReadAsStringAsync();
-        var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString();
+        var threadId = JsonDocument.Parse(await threadRes.Content.ReadAsStringAsync())
+                                   .RootElement.GetProperty("id").GetString();
 
         // Send message
-        var messagePayload = JsonSerializer.Serialize(new
-        {
-            role = "user",
-            content = input
-        });
+        var messagePayload = JsonSerializer.Serialize(new { role = "user", content = input });
         await _http.PostAsync(
             $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/messages",
             new StringContent(messagePayload, Encoding.UTF8, "application/json")
@@ -55,16 +51,16 @@ public class GptService
             $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/runs",
             new StringContent(runPayload, Encoding.UTF8, "application/json")
         );
-        var runJson = await runRes.Content.ReadAsStringAsync();
-        var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString();
+        var runId = JsonDocument.Parse(await runRes.Content.ReadAsStringAsync())
+                                .RootElement.GetProperty("id").GetString();
 
         // Poll for completion
         while (true)
         {
-            var statusRes = await _http.GetAsync(
+            var statusJson = await (await _http.GetAsync(
                 $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/runs/{runId}"
-            );
-            var statusJson = await statusRes.Content.ReadAsStringAsync();
+            )).Content.ReadAsStringAsync();
+
             var status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString();
             if (status == "completed") break;
             if (status == "failed") return "[Agent Error]";
@@ -72,18 +68,14 @@ public class GptService
         }
 
         // Get messages
-        var messagesRes = await _http.GetAsync(
+        var messagesJson = await (await _http.GetAsync(
             $"{_endpoint}/api/projects/{_projectName}/threads/{threadId}/messages"
-        );
-        var messagesJson = await messagesRes.Content.ReadAsStringAsync();
-        var messages = JsonDocument.Parse(messagesJson).RootElement;
+        )).Content.ReadAsStringAsync();
 
-        foreach (var msg in messages.EnumerateArray())
+        foreach (var msg in JsonDocument.Parse(messagesJson).RootElement.EnumerateArray())
         {
             if (msg.GetProperty("role").GetString() == "assistant")
-            {
                 return msg.GetProperty("content").GetString() ?? "[No response]";
-            }
         }
 
         return "[No assistant message found]";

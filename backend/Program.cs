@@ -48,10 +48,10 @@ builder.Services.AddSingleton<GptService>();
 builder.Services.AddSingleton<TtsService>();
 builder.Services.AddSingleton<WsHub>();
 builder.Services.AddControllers();
-app.MapControllers();
+
 
 var app = builder.Build();
-
+app.MapControllers();
 // Use CORS in dev only
 if (app.Environment.IsDevelopment())
 {

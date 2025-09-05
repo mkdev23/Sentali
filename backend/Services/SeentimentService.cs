@@ -7,8 +7,9 @@ public class SentimentService
 {
     private readonly TextAnalyticsClient _client;
 
-    public SentimentService(IConfiguration config, DefaultAzureCredential cred)
+    public SentimentService(IConfiguration config)
     {
+        var cred = new DefaultAzureCredential();
         _client = new TextAnalyticsClient(new Uri(config["TEXT_ANALYTICS_ENDPOINT"]!), cred);
     }
 
