@@ -8,6 +8,9 @@ import { BlendfacesController } from './blendfaces.js';
 
 const overlay = document.getElementById('overlay');
 const blendfacesToggle = document.getElementById('blendfacesToggle');
+// Use same-origin for API
+
+
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
@@ -40,7 +43,7 @@ let currentVRM;
 let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
-const backendBase = 'http://localhost:8123';
+const backendBase = '';
 
 // Load VRM
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
@@ -103,7 +106,8 @@ function shouldUseBlendfaces() {
 
 // WS client
 const wsClient = new WSClient({
-  url: 'ws://127.0.0.1:8124',
+  url: 'wss://${window.location.host}/ws`,',
+
 
   onOpen: () => overlay && (overlay.textContent = '✅ WS connected — waiting for cues...'),
 

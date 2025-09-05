@@ -28,6 +28,8 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+      <Compile Remove="Controllers\WebhookHandler.cs" />
+  <Compile Remove="Controllers\RepeatRequest.cs" />
   </ItemGroup>
 
 </Project>
