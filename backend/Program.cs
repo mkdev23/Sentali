@@ -42,9 +42,13 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<SentimentService>();
-builder.Services.AddSingleton<TtsService>();
 builder.Services.AddSingleton<BlobStorageService>();
 builder.Services.AddSingleton<AzureSpeechService>();
+builder.Services.AddSingleton<GptService>();
+builder.Services.AddSingleton<TtsService>();
+builder.Services.AddSingleton<WsHub>();
+builder.Services.AddControllers();
+app.MapControllers();
 
 var app = builder.Build();
 
