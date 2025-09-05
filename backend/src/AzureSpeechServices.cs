@@ -73,7 +73,9 @@ namespace SentaliApp.Services
                 return;
             }
 
-            var baseUrl = Environment.GetEnvironmentVariable("BASE_URL") ?? "http://localhost:8123";
+            var baseUrl = Environment.GetEnvironmentVariable("BASE_URL") 
+              ?? $"https://{Environment.GetEnvironmentVariable("WEBSITE_HOSTNAME")}";
+
             var publicUrl = $"{baseUrl}/tts/output.mp3?v={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
 
             _ws.Broadcast(new

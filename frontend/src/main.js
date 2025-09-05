@@ -106,7 +106,7 @@ function shouldUseBlendfaces() {
 
 // WS client
 const wsClient = new WSClient({
-  url: 'wss://${window.location.host}/ws`,',
+  url: `wss://${window.location.host}/ws`,
 
 
   onOpen: () => overlay && (overlay.textContent = '✅ WS connected — waiting for cues...'),
@@ -189,7 +189,7 @@ window.simulateCue = async (name = 'joy', weight = 1.0, audioPath = null) => {
   }
 };
 
-// Ambient behaviours
+// === Ambient behaviours ===
 let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
@@ -213,6 +213,86 @@ function handleGaze(delta) {
     head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeDirection, 0.05);
   }
 }
+
+function handleBreath() {
+  const chest = currentVRM?.humanoid?.getNormalizedBoneNode('chest');
+  if (chest) {
+    chest.position.y = Math.sin(clock.elapsedTime * 1.5) * 0.005;
+  }
+}
+
+// === Chat + Agent integration ===
+async function sendToAgent() {
+  const inputEl = document.getElementById("agentInput");
+  const input = inputEl.value.trim();
+  if (!input) return;
+
+  addChatEntry("user", input);
+  inputEl.value = "";
+
+  try {
+    const res = await fetch(`${backendBase}/api/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    });
+    const json = await res.json();
+    addChatEntry("agent", json.text || "[No response]");
+  } catch (err) {
+    console.error("[Agent Error]", err);
+    addChatEntry("agent", "[Error contacting Agent]");
+  }
+}
+
+function addChatEntry(role, text) {
+  const log = document.getElementById("chat-log");
+  const div = document.createElement("div");
+  div.className = "chat-entry";
+  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// === Mic button speech-to-text ===
+function initMicButton() {
+  const micBtn = document.getElementById("micBtn");
+  if (!('webkitSpeechRecognition' in window)) {
+    micBtn.disabled = true;
+    micBtn.title = "Speech recognition not supported in this browser.";
+    return;
+  }
+
+  micBtn.addEventListener("click", () => {
+    const recognition = new webkitSpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      document.getElementById("agentInput").value = transcript;
+      sendToAgent();
+    };
+
+    recognition.onerror = (err) => {
+      console.error("[Mic Error]", err);
+    };
+
+    recognition.start();
+  });
+}
+
+// === Wire up UI events ===
+function initUIBindings() {
+  document.getElementById("agentSendBtn")
+    .addEventListener("click", sendToAgent);
+
+  initMicButton();
+}
+
+// Call this once after DOM is ready
+initUIBindings();
+
 
 function handleBreath() {
   const chest = currentVRM?.humanoid?.getNormalizedBoneNode('chest');
