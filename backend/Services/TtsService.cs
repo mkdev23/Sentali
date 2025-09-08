@@ -10,19 +10,31 @@ public class TtsService
 
     public TtsService(IConfiguration config)
     {
-        var endpoint = new Uri(config["SPEECH_ENDPOINT"] 
-            ?? throw new Exception("Missing SPEECH_ENDPOINT"));
+        var ttsKey = config["AZURE_TTS_KEY"];
+        var ttsRegion = config["AZURE_TTS_REGION"];
 
-        // Acquire token using Managed Identity
-        var credential = new DefaultAzureCredential();
-        var tokenRequestContext = new Azure.Core.TokenRequestContext(
-            new[] { "https://cognitiveservices.azure.com/.default" });
-        var accessToken = credential.GetToken(tokenRequestContext, default);
+        if (!string.IsNullOrEmpty(ttsKey) && !string.IsNullOrEmpty(ttsRegion))
+        {
+            Console.WriteLine("[TTS] Using Azure TTS Key authentication");
+            _config = SpeechConfig.FromSubscription(ttsKey, ttsRegion);
+        }
+        else
+        {
+            var endpoint = new Uri(config["SPEECH_ENDPOINT"] 
+                ?? throw new Exception("Missing SPEECH_ENDPOINT or AZURE_TTS_KEY/AZURE_TTS_REGION"));
 
-        Console.WriteLine("[TTS] Got Speech token from Managed Identity");
+            // Acquire token using Managed Identity
+            var credential = new DefaultAzureCredential();
+            var tokenRequestContext = new Azure.Core.TokenRequestContext(
+                new[] { "https://cognitiveservices.azure.com/.default" });
+            var accessToken = credential.GetToken(tokenRequestContext, default);
 
-        // Use FromAuthorizationToken for MI
-        _config = SpeechConfig.FromAuthorizationToken(accessToken.Token, endpoint.Host);
+            Console.WriteLine("[TTS] Got Speech token from Managed Identity");
+
+            // Use FromAuthorizationToken for MI
+            _config = SpeechConfig.FromAuthorizationToken(accessToken.Token, endpoint.Host);
+        }
+        
         _config.SpeechSynthesisVoiceName = "en-US-JennyNeural";
     }
 

@@ -12,7 +12,7 @@ Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// CORS for local frontend dev
+// CORS for local frontend dev and Azure deployment
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontendDev", policy =>
@@ -21,6 +21,25 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
+    });
+    
+    options.AddPolicy("AllowAzureDeployment", policy =>
+    {
+        var baseUrl = builder.Configuration["BASE_URL"];
+        if (!string.IsNullOrEmpty(baseUrl))
+        {
+            policy.WithOrigins(baseUrl)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            // Fallback to allow any origin if BASE_URL is not configured
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
     });
 });
 
@@ -37,8 +56,8 @@ builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var cred = new DefaultAzureCredential();
-    var aoaiClient = new AzureOpenAIClient(new Uri(config["OPENAI_ENDPOINT"]!), cred);
-    return new SystemMessage(aoaiClient.GetChatClient(config["OPENAI_DEPLOYMENT"]!));
+    var aoaiClient = new AzureOpenAIClient(new Uri(config["AZURE_OPENAI_ENDPOINT"]!), cred);
+    return new SystemMessage(aoaiClient.GetChatClient(config["AZURE_OPENAI_DEPLOYMENT"]!));
 });
 
 builder.Services.AddSingleton<SentimentService>();
@@ -52,10 +71,14 @@ builder.Services.AddControllers();
 
 var app = builder.Build();
 app.MapControllers();
-// Use CORS in dev only
+// Use CORS in dev and production
 if (app.Environment.IsDevelopment())
 {
     app.UseCors("AllowFrontendDev");
+}
+else
+{
+    app.UseCors("AllowAzureDeployment");
 }
 
 // Static file provider with VRM + HDR MIME mapping
@@ -80,11 +103,16 @@ app.UseStaticFiles(new StaticFileOptions
     ContentTypeProvider = provider,
     OnPrepareResponse = ctx =>
     {
+        var baseUrl = app.Configuration["BASE_URL"];
         if (app.Environment.IsDevelopment())
         {
             ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "http://localhost:5173";
-            ctx.Context.Response.Headers["Vary"] = "Origin";
         }
+        else if (!string.IsNullOrEmpty(baseUrl))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = baseUrl;
+        }
+        ctx.Context.Response.Headers["Vary"] = "Origin";
     }
 });
 
