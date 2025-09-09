@@ -6,72 +6,68 @@ using Azure.AI.OpenAI;
 using OpenAI.Chat;
 using SentaliApp.Services;
 using SentaliApp.SystemMessages;
+using SentaliApp.Models;            // for ChatRequest/ChatResponse
 using Microsoft.AspNetCore.Mvc;
 
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// CORS for local frontend dev
-builder.Services.AddCors(options =>
+// 1) Bind to Azure’s assigned PORT before Build()
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://*:{port}");
+
+// 2) CORS for local frontend dev
+builder.Services.AddCors(opts =>
 {
-    options.AddPolicy("AllowFrontendDev", policy =>
-    {
-        policy.WithOrigins("http://localhost:5173")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
-    });
+    opts.AddPolicy("AllowFrontendDev", p =>
+        p.WithOrigins("http://localhost:5173")
+         .AllowAnyHeader()
+         .AllowAnyMethod()
+         .AllowCredentials());
 });
 
-// WebSocket hub
-var wsHub = new WsHub();
-builder.Services.AddSingleton(wsHub);
+// 3) WebSocket hub
+builder.Services.AddSingleton<WsHub>();
 
-// Azure + pipeline services
-builder.Services.AddSingleton(new DefaultAzureCredential());
+// 4) Azure & pipeline services
+builder.Services.AddSingleton<DefaultAzureCredential>();
 builder.Services.AddSingleton<GptService>();
 
-// Register SystemMessage with a ChatClient from AzureOpenAIClient
+// 5) SystemMessage backed by AzureOpenAIClient
 builder.Services.AddSingleton(sp =>
 {
-    var config = sp.GetRequiredService<IConfiguration>();
-    var cred = new DefaultAzureCredential();
-    var aoaiClient = new AzureOpenAIClient(new Uri(config["OPENAI_ENDPOINT"]!), cred);
-    return new SystemMessage(aoaiClient.GetChatClient(config["OPENAI_DEPLOYMENT"]!));
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var cred = sp.GetRequiredService<DefaultAzureCredential>();
+    var client = new AzureOpenAIClient(new Uri(cfg["OPENAI_ENDPOINT"]!), cred);
+    return new SystemMessage(client.GetChatClient(cfg["OPENAI_DEPLOYMENT"]!));
 });
 
 builder.Services.AddSingleton<SentimentService>();
 builder.Services.AddSingleton<BlobStorageService>();
 builder.Services.AddSingleton<AzureSpeechService>();
-builder.Services.AddSingleton<GptService>();
 builder.Services.AddSingleton<TtsService>();
-builder.Services.AddSingleton<WsHub>();
+
+// 6) MVC Controllers (if you have any)
 builder.Services.AddControllers();
 
-
 var app = builder.Build();
-app.MapControllers();
-// Use CORS in dev only
-if (app.Environment.IsDevelopment())
-{
-    app.UseCors("AllowFrontendDev");
-}
 
-// Static file provider with VRM + HDR MIME mapping
+// 7) Use CORS in dev only
+if (app.Environment.IsDevelopment())
+    app.UseCors("AllowFrontendDev");
+
+// 8) Static file MIME mapping
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".mp3"] = "audio/mpeg";
 provider.Mappings[".vrm"] = "application/octet-stream";
 provider.Mappings[".hdr"] = "image/vnd.radiance";
 
-// Serve frontend from wwwroot
+// 9) Serve wwwroot
 app.UseDefaultFiles();
-app.UseStaticFiles(new StaticFileOptions
-{
-    ContentTypeProvider = provider
-});
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = provider });
 
-// Serve /tts folder with CORS for dev
+// 10) Serve /tts folder with CORS for dev
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(
@@ -88,32 +84,29 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-// Map WebSocket endpoint at /ws
-app.Map("/ws", wsApp =>
+// 11) Map Controllers (if you added ChatController/TTSController)
+app.MapControllers();
+
+// 12) Fallback minimal‐API for /api/chat
+app.MapPost("/api/chat", async (
+    GptService gpt,
+    [FromBody] ChatRequest req) =>
 {
-    wsApp.UseWebSockets();
-    wsApp.Run(async context =>
-    {
-        if (context.WebSockets.IsWebSocketRequest)
-        {
-            var socket = await context.WebSockets.AcceptWebSocketAsync();
-            await wsHub.HandleClientAsync(socket);
-        }
-        else
-        {
-            context.Response.StatusCode = 400;
-        }
-    });
+    if (string.IsNullOrWhiteSpace(req.Text))
+        return Results.BadRequest("Missing 'text' in request body.");
+
+    var reply = await gpt.GetResponse(req.Text);
+    return Results.Ok(new ChatResponse { Text = reply });
 });
 
-// Existing viseme endpoint
+// 13) Existing viseme endpoint
 app.MapGet("/speak", async (AzureSpeechService tts, string text, string expression) =>
 {
     await tts.SpeakWithVisemesAsync(text, expression);
     return Results.Ok(new { status = "queued", text, expression });
 });
 
-// Secure GPT→Sentiment→TTS→Blob endpoint
+// 14) Secure GPT→Sentiment→TTS→Blob endpoint
 app.MapPost("/api/tts", async (
     GptService gpt,
     SentimentService sentiment,
@@ -135,8 +128,27 @@ app.MapPost("/api/tts", async (
 
     return Results.Ok(new { text = gptResponse, sentiment = sent, expression, audioUrl = sasUrl });
 });
+
+// 15) Health check
 app.MapGet("/health", () => Results.Ok("App is running"));
-// Bind to Azure's assigned port in production
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-builder.WebHost.UseUrls($"http://*:{port}");
+
+// 16) WebSocket endpoint at /ws
+app.Map("/ws", wsApp =>
+{
+    wsApp.UseWebSockets();
+    wsApp.Run(async context =>
+    {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            var socket = await context.WebSockets.AcceptWebSocketAsync();
+            var hub = context.RequestServices.GetRequiredService<WsHub>();
+            await hub.HandleClientAsync(socket);
+        }
+        else
+        {
+            context.Response.StatusCode = 400;
+        }
+    });
+});
+
 app.Run();
