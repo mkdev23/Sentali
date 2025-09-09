@@ -39,7 +39,7 @@ public class GptService
             Console.WriteLine("[Agent REST] Using Managed Identity authentication");
             var credential = new DefaultAzureCredential();
             var token = await credential.GetTokenAsync(
-                new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" })
+                new TokenRequestContext(new[] { "https://ai.azure.com/.default" })
             );
             _http.DefaultRequestHeaders.Authorization = 
                 new AuthenticationHeaderValue("Bearer", token.Token);
