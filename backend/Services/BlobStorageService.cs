@@ -19,8 +19,7 @@ namespace SentaliApp.Services
             if (!Uri.TryCreate(endpointRaw, UriKind.Absolute, out var endpointUri))
                 throw new InvalidOperationException($"Invalid BLOB_STORAGE_ENDPOINT: '{endpointRaw}'");
 
-            // Build the container URI directly
-            var containerUri = new Uri($"{endpointUri}{containerName}");
+            var containerUri = new Uri($"{endpointUri.AbsoluteUri.TrimEnd('/')}/{containerName}");
 
             _container = new BlobContainerClient(containerUri, cred);
         }
@@ -32,6 +31,9 @@ namespace SentaliApp.Services
 
             using var ms = new MemoryStream(data);
             await blob.UploadAsync(ms, overwrite: true);
+
+            if (!blob.CanGenerateSasUri)
+                throw new InvalidOperationException("Blob client cannot generate SAS URI. Check credentials/roles.");
 
             return blob.GenerateSasUri(
                 BlobSasPermissions.Read,
