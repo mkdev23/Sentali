@@ -162,13 +162,12 @@ app.MapGet("/speak", async (
     });
 });
 
-// 15) Secure GPT → Sentiment → TTS → Blob endpoint (with viseme & joy fallback)
+// 15) Pure TTS endpoint — speaks provided text (e.g., GPT reply from /api/chat)
 app.MapPost("/api/tts", async (
-    GptService gpt,
     SentimentService sentiment,
     TtsService tts,
     BlobStorageService blob,
-    [FromBody] ChatRequest req,   // ✅ now binds { "text": "..." }
+    [FromBody] ChatRequest req,   // Accepts { "text": "..." }
     ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("TtsEndpoint");
@@ -178,11 +177,8 @@ app.MapPost("/api/tts", async (
 
     try
     {
-        // 1) GPT reply
-        var reply = await gpt.GetResponse(req.Text);
-
-        // 2) Sentiment → expression
-        var sent       = await sentiment.GetSentiment(reply);
+        // 1) Sentiment → expression
+        var sent       = await sentiment.GetSentiment(req.Text);
         var expression = sent switch
         {
             "Positive" => "smile",
@@ -190,13 +186,13 @@ app.MapPost("/api/tts", async (
             _          => "neutral"
         };
 
-        // 3) Synthesize with visemes
-        var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(reply);
+        // 2) Synthesize with visemes
+        var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(req.Text);
 
-        // 4) Upload audio
+        // 3) Upload audio
         var sasUrl = await blob.UploadAndGetSas(audioBytes);
 
-        // 5) Build viseme payload using the concrete VisemePayload type
+        // 4) Build viseme payload
         var visemePayload = visemes
             .Select(v => new VisemePayload
             {
@@ -205,7 +201,7 @@ app.MapPost("/api/tts", async (
             })
             .ToList();
 
-        // 6) If no visemes emitted, inject a joy cue at t=0
+        // 5) If no visemes emitted, inject a joy cue at t=0
         if (visemePayload.Count == 0)
         {
             visemePayload.Add(new VisemePayload
@@ -216,7 +212,7 @@ app.MapPost("/api/tts", async (
             expression = "joy";
         }
 
-        // 7) Broadcast over WebSocket
+        // 6) Broadcast over WebSocket
         var hub = app.Services.GetRequiredService<WsHub>();
         hub.Broadcast(new
         {
@@ -226,10 +222,9 @@ app.MapPost("/api/tts", async (
             visemes    = visemePayload
         });
 
-        // 8) Return payload
+        // 7) Return payload
         return Results.Ok(new
         {
-            text       = reply,
             sentiment  = sent,
             expression,
             audioUrl   = sasUrl,
@@ -245,6 +240,8 @@ app.MapPost("/api/tts", async (
             statusCode: 500);
     }
 });
+
+
 
 
 // 16) Health check
