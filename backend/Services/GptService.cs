@@ -8,14 +8,10 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 
-
 namespace SentaliApp.Services
 {
-
-
     public class GptService
     {
-
         private readonly string _agentId;
         private readonly string _projectEndpoint;
         private readonly string? _projectApiKey;
