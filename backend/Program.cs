@@ -1,23 +1,32 @@
-﻿using DotNetEnv;
+﻿using System;
+using System.IO;
+using DotNetEnv;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+
 using Azure.Identity;
 using Azure.AI.OpenAI;
-using OpenAI.Chat;
+
 using SentaliApp.Services;
 using SentaliApp.SystemMessages;
-using SentaliApp.Models;            // for ChatRequest/ChatResponse
-using Microsoft.AspNetCore.Mvc;
+using SentaliApp.Models;
 
 Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1) Bind to Azure’s assigned PORT before Build()
+// 1) Logging providers (visible in Azure Log Stream)
+builder.Logging.AddAzureWebAppDiagnostics();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
+// 2) Bind to Azure’s assigned PORT before Build()
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://*:{port}");
 
-// 2) CORS for local frontend dev
+// 3) CORS for local frontend dev
 builder.Services.AddCors(opts =>
 {
     opts.AddPolicy("AllowFrontendDev", p =>
@@ -27,47 +36,61 @@ builder.Services.AddCors(opts =>
          .AllowCredentials());
 });
 
-// 3) WebSocket hub
+// 4) WebSocket hub
 builder.Services.AddSingleton<WsHub>();
 
-// 4) Azure & pipeline services
+// 5) Azure & pipeline services
 builder.Services.AddSingleton<DefaultAzureCredential>();
 builder.Services.AddSingleton<GptService>();
 
-// 5) SystemMessage backed by AzureOpenAIClient
-builder.Services.AddSingleton(sp =>
+// OPTIONAL: register SystemMessage if used elsewhere
+var cfg = builder.Configuration;
+var openAiEndpoint   = cfg["AZURE_OPENAI_ENDPOINT"]   ?? cfg["OPENAI_ENDPOINT"];
+var openAiDeployment = cfg["AZURE_OPENAI_DEPLOYMENT"] ?? cfg["OPENAI_DEPLOYMENT"];
+if (!string.IsNullOrWhiteSpace(openAiEndpoint) &&
+    !string.IsNullOrWhiteSpace(openAiDeployment))
 {
-    var cfg = sp.GetRequiredService<IConfiguration>();
-    var cred = sp.GetRequiredService<DefaultAzureCredential>();
-    var client = new AzureOpenAIClient(new Uri(cfg["OPENAI_ENDPOINT"]!), cred);
-    return new SystemMessage(client.GetChatClient(cfg["OPENAI_DEPLOYMENT"]!));
-});
+    builder.Services.AddSingleton(sp =>
+    {
+        var cred   = sp.GetRequiredService<DefaultAzureCredential>();
+        var client = new AzureOpenAIClient(new Uri(openAiEndpoint!), cred);
+        return new SystemMessage(client.GetChatClient(openAiDeployment!));
+    });
+}
 
+// 6) Core services
 builder.Services.AddSingleton<SentimentService>();
 builder.Services.AddSingleton<BlobStorageService>();
-builder.Services.AddSingleton<AzureSpeechService>();
+
+// Remove AzureSpeechService registration
+// builder.Services.AddSingleton<AzureSpeechService>();
+
+// Register the new TtsService with viseme support
 builder.Services.AddSingleton<TtsService>();
 
-// 6) MVC Controllers (if you have any)
+// 7) MVC Controllers (if you have any)
 builder.Services.AddControllers();
 
 var app = builder.Build();
 
-// 7) Use CORS in dev only
+// 8) Dev exception page and CORS
 if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
     app.UseCors("AllowFrontendDev");
+}
 
-// 8) Static file MIME mapping
+// 9) Static file MIME mapping
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".mp3"] = "audio/mpeg";
 provider.Mappings[".vrm"] = "application/octet-stream";
 provider.Mappings[".hdr"] = "image/vnd.radiance";
 
-// 9) Serve wwwroot
+// 10) Serve wwwroot
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = provider });
 
-// 10) Serve /tts folder with CORS for dev
+// 11) Serve /tts folder with CORS for dev
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(
@@ -79,60 +102,151 @@ app.UseStaticFiles(new StaticFileOptions
         if (app.Environment.IsDevelopment())
         {
             ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "http://localhost:5173";
-            ctx.Context.Response.Headers["Vary"] = "Origin";
+            ctx.Context.Response.Headers["Vary"]                        = "Origin";
         }
     }
 });
 
-// 11) Map Controllers (if you added ChatController/TTSController)
+// 12) Map Controllers
 app.MapControllers();
 
-// 12) Fallback minimal‐API for /api/chat
+// 13) Minimal API for /api/chat with surfaced errors
 app.MapPost("/api/chat", async (
     GptService gpt,
-    [FromBody] ChatRequest req) =>
+    [FromBody] ChatRequest req,
+    ILoggerFactory loggerFactory) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Text))
+    var logger = loggerFactory.CreateLogger("ChatEndpoint");
+
+    if (req is null || string.IsNullOrWhiteSpace(req.Text))
         return Results.BadRequest("Missing 'text' in request body.");
 
-    var reply = await gpt.GetResponse(req.Text);
-    return Results.Ok(new ChatResponse { Text = reply });
+    try
+    {
+        var reply = await gpt.GetResponse(req.Text);
+        return Results.Ok(new ChatResponse { Text = reply });
+    }
+    catch (HttpRequestException httpEx)
+    {
+        logger.LogError(httpEx, "Chat service HTTP failure");
+        return Results.Problem(
+            title: "Chat failed",
+            detail: httpEx.Message,
+            statusCode: 502);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Chat service unhandled exception");
+        return Results.Problem(
+            title: "Chat failed",
+            detail: app.Environment.IsDevelopment()
+                ? ex.ToString()
+                : ex.Message,
+            statusCode: 500);
+    }
 });
 
-// 13) Existing viseme endpoint
-app.MapGet("/speak", async (AzureSpeechService tts, string text, string expression) =>
+// 14) Updated /speak endpoint using TtsService
+app.MapGet("/speak", async (
+    TtsService tts,
+    string text,
+    string expression) =>
 {
-    await tts.SpeakWithVisemesAsync(text, expression);
-    return Results.Ok(new { status = "queued", text, expression });
+    var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(text);
+    return Results.Ok(new
+    {
+        status      = "queued",
+        text,
+        expression,
+        visemeCount = visemes.Count
+    });
 });
 
-// 14) Secure GPT→Sentiment→TTS→Blob endpoint
+// 15) Secure GPT → Sentiment → TTS → Blob endpoint (with viseme & joy fallback)
 app.MapPost("/api/tts", async (
     GptService gpt,
     SentimentService sentiment,
     TtsService tts,
     BlobStorageService blob,
-    [FromBody] string userInput) =>
+    [FromBody] string userInput,
+    ILoggerFactory loggerFactory) =>
 {
-    var gptResponse = await gpt.GetResponse(userInput);
-    var sent = await sentiment.GetSentiment(userInput);
-    var expression = sent switch
+    var logger = loggerFactory.CreateLogger("TtsEndpoint");
+    try
     {
-        "Positive" => "smile",
-        "Negative" => "frown",
-        _ => "neutral"
-    };
+        // 1) GPT reply
+        var reply = await gpt.GetResponse(userInput);
 
-    var audioBytes = await tts.Synthesize(gptResponse);
-    var sasUrl = await blob.UploadAndGetSas(audioBytes);
+        // 2) Sentiment → expression
+        var sent       = await sentiment.GetSentiment(reply);
+        var expression = sent switch
+        {
+            "Positive" => "smile",
+            "Negative" => "frown",
+            _          => "neutral"
+        };
 
-    return Results.Ok(new { text = gptResponse, sentiment = sent, expression, audioUrl = sasUrl });
+        // 3) Synthesize with visemes
+        var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(reply);
+
+        // 4) Upload audio
+        var sasUrl = await blob.UploadAndGetSas(audioBytes);
+
+        // 5) Build viseme payload using the concrete VisemePayload type
+        var visemePayload = visemes
+            .Select(v => new VisemePayload
+            {
+                VisemeId = v.VisemeId,
+                TimeMs   = v.AudioOffset / 10_000UL
+            })
+            .ToList();
+
+        // 6) If no visemes emitted, inject a joy cue at t=0
+        if (visemePayload.Count == 0)
+        {
+            visemePayload.Add(new VisemePayload
+            {
+                VisemeId = 0,
+                TimeMs   = 0
+            });
+            expression = "joy";
+        }
+
+        // 7) Broadcast over WebSocket
+        var hub = app.Services.GetRequiredService<WsHub>();
+        hub.Broadcast(new
+        {
+            type       = "blendshapes",
+            audioUrl   = sasUrl,
+            expression,
+            visemes    = visemePayload
+        });
+
+        // 8) Return payload
+        return Results.Ok(new
+        {
+            text       = reply,
+            sentiment  = sent,
+            expression,
+            audioUrl   = sasUrl,
+            visemes    = visemePayload
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "TTS pipeline failed");
+        return Results.Problem(
+            title: "TTS pipeline failed",
+            detail: ex.Message,
+            statusCode: 500);
+    }
 });
 
-// 15) Health check
+
+// 16) Health check
 app.MapGet("/health", () => Results.Ok("App is running"));
 
-// 16) WebSocket endpoint at /ws
+// 17) WebSocket endpoint at /ws
 app.Map("/ws", wsApp =>
 {
     wsApp.UseWebSockets();
@@ -141,7 +255,7 @@ app.Map("/ws", wsApp =>
         if (context.WebSockets.IsWebSocketRequest)
         {
             var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var hub = context.RequestServices.GetRequiredService<WsHub>();
+            var hub    = context.RequestServices.GetRequiredService<WsHub>();
             await hub.HandleClientAsync(socket);
         }
         else

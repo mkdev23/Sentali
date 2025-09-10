@@ -1,79 +1,114 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.CognitiveServices.Speech;       // for VisemeEventArgs
 using SentaliApp.Services;
 
 namespace SentaliApp.Controllers
 {
     [ApiController]
+    [Route("api/tts")]
     public class TtsController : ControllerBase
     {
         private readonly GptService _gpt;
         private readonly TtsService _tts;
         private readonly SentimentService _sentiment;
-        private readonly IWebHostEnvironment _env;
+        private readonly BlobStorageService _blob;
         private readonly WsHub _ws;
+        private readonly ILogger<TtsController> _logger;
 
         public TtsController(
             GptService gpt,
             TtsService tts,
             SentimentService sentiment,
-            IWebHostEnvironment env,
-            WsHub ws)
+            BlobStorageService blob,
+            WsHub ws,
+            ILogger<TtsController> logger)
         {
-            _gpt = gpt;
-            _tts = tts;
+            _gpt       = gpt;
+            _tts       = tts;
             _sentiment = sentiment;
-            _env = env;
-            _ws = ws;
+            _blob      = blob;
+            _ws        = ws;
+            _logger    = logger;
         }
 
-        [HttpPost("api/tts")]
-        public async Task<IActionResult> Tts([FromBody] string text)
+        [HttpPost]
+        public async Task<IActionResult> Post([FromBody] string text)
         {
             if (string.IsNullOrWhiteSpace(text))
                 return BadRequest(new { error = "No text provided" });
 
             try
             {
-                Console.WriteLine($"[TTS] Incoming text: {text}");
+                _logger.LogInformation("[TTS] Input: {Text}", text);
 
-                // 1. Get Agent reply via SDK
+                // 1) Get GPT reply
                 var reply = await _gpt.GetResponse(text);
+                _logger.LogInformation("[TTS] GPT Response: {Reply}", reply);
 
-                // 2. Determine sentiment → expression
-                var sentiment = await _sentiment.GetSentiment(reply);
+                // 2) Determine sentiment → expression
+                var sentiment  = await _sentiment.GetSentiment(reply);
                 var expression = sentiment switch
                 {
                     "Positive" => "joy",
                     "Negative" => "angry",
-                    "Neutral"  => "neutral",
                     _          => "neutral"
                 };
+                _logger.LogInformation(
+                    "[TTS] Sentiment: {Sentiment}, Expression: {Expression}",
+                    sentiment, expression);
 
-                // 3. Generate audio
-                var audioBytes = await _tts.Synthesize(reply);
+                // 3) Synthesize speech + visemes
+                (byte[] audioBytes, List<VisemeEventArgs> visemes) 
+                    = await _tts.SynthesizeWithVisemesAsync(reply);
 
-                // 4. Save to wwwroot/tts/output.mp3
-                var ttsDir = Path.Combine(_env.WebRootPath ?? "wwwroot", "tts");
-                Directory.CreateDirectory(ttsDir);
-                var outputPath = Path.Combine(ttsDir, "output.mp3");
-                await System.IO.File.WriteAllBytesAsync(outputPath, audioBytes);
+                // 4) Upload audio to Blob and get SAS URL
+                var audioUrl = await _blob.UploadAndGetSas(audioBytes);
 
-                // 5. Broadcast to WS clients
-                var publicUrl = $"/tts/output.mp3?v={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+                // 5) Build viseme payload
+                var visemePayload = new List<object>();
+                foreach (var v in visemes)
+                {
+                    visemePayload.Add(new
+                    {
+                        VisemeId = v.VisemeId,
+                        TimeMs   = (int)(v.AudioOffset / 10_000)
+                    });
+                }
+
+                // 6) Default to joy if no visemes
+                if (visemePayload.Count == 0)
+                {
+                    visemePayload.Add(new { VisemeId = 0, TimeMs = 0 });
+                    expression = "joy";
+                }
+
+                // 7) Broadcast to WebSockets
                 _ws.Broadcast(new
                 {
-                    type = "blendshapes",
-                    values = new Dictionary<string, double> { { expression, 1.0 } },
-                    audio = publicUrl
+                    type       = "blendshapes",
+                    audioUrl,
+                    expression,
+                    visemes    = visemePayload
                 });
 
-                // 6. Return JSON to frontend
-                return Ok(new { text = reply, audio = publicUrl, expression, sentiment });
+                // 8) Return structured JSON
+                return Ok(new
+                {
+                    text       = reply,
+                    sentiment,
+                    expression,
+                    audioUrl,
+                    visemes    = visemePayload
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[TTS ERROR] {ex}");
-                return StatusCode(500, new { error = ex.Message, stack = ex.StackTrace });
+                _logger.LogError(ex, "[TTS] Error");
+                return StatusCode(500, new { error = ex.Message });
             }
         }
     }
