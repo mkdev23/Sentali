@@ -38,8 +38,8 @@ namespace SentaliApp.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] ChatRequest req)
         {
-            if (req == null || string.IsNullOrWhiteSpace(req.Text))
-                return BadRequest(new { error = "Missing 'text' property" });
+            if (req == null || string.IsNullOrEmpty(req.Text))
+               return BadRequest(new { error = "Missing 'text' property" });
 
             _logger.LogInformation("[TTS] Speaking provided text: {Text}", req.Text);
 

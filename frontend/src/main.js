@@ -141,33 +141,62 @@ function shouldUseBlendfaces() {
   return blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
 }
 
-/* === WebSocket for visemes & blendshapes === */
+/* === WebSocket for visemes & blendshapes ===
+   Backend WS payload shape (from your controller):
+   { type: "blendshapes", audioUrl, expression, visemes: [{ VisemeId, TimeMs }, ...] }
+   Fix: handle audioUrl (previously code expected data.audio) and map visemes to values.
+*/
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
   onOpen: () => console.log('✅ WS connected'),
   onMessage: data => {
-    if (data.type === 'blendshape') {
-      setExpressionPersistent(data.name, data.weight ?? 1, DECAY_EMO);
+    // 1) Real-time audio from WS, if sent
+    const audioUrl = data.audioUrl || data.audio; // support either
+    if (audioUrl) {
+      new Audio(audioUrl).play().catch(e => console.warn(e));
     }
-    if (data.type === 'blendshapes') {
+
+    // 2) Expression mapping, if present
+    if (data.expression) {
+      setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
+    }
+
+    // 3) Visemes support: if visemes array present, map into values for Blendfaces
+    if (Array.isArray(data.visemes) && blendfacesWSHandler) {
+      const values = {};
+      // Simple immediate pulse for each viseme id (fallback).
+      // If you want scheduled timing, we can add a scheduler later.
+      for (const v of data.visemes) {
+        values[`viseme_${v.VisemeId}`] = 1;
+      }
+      blendfacesWSHandler({ type: 'blendshapes', values });
+    }
+
+    // 4) Legacy support: if a values bag arrives, apply it directly
+    if (data.type === 'blendshapes' && data.values) {
       for (const [n, w] of Object.entries(data.values)) {
         setExpressionPersistent(n, Number(w), DECAY_EMO);
       }
     }
-    if (data.type === 'viseme') {
+
+    // 5) Single viseme
+    if (data.type === 'viseme' && data.name) {
       setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
-    }
-    if (data.audio) {
-      const url = data.audio.startsWith('/') ? `${backendBase}${data.audio}` : data.audio;
-      new Audio(url).play().catch(e => console.warn(e));
     }
   },
   onClose: () => console.log('❌ WS disconnected')
 });
 wsClient.connect();
 
-/* === Chat + TTS integration === */
+/* === Chat + TTS integration ===
+   Split flow:
+   - /api/chat -> reply text
+   - /api/tts  -> audio + visemes for that reply
+*/
+
 async function speak(text) {
+  // Guard: never call TTS with empty/whitespace
+  if (!text || !text.trim()) return;
   try {
     const res = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
@@ -178,6 +207,7 @@ async function speak(text) {
 
     const data = await res.json();
 
+    // Play returned audio
     if (data.audioUrl) {
       const audio = new Audio(data.audioUrl);
       audio.crossOrigin = 'anonymous';
@@ -185,67 +215,58 @@ async function speak(text) {
     } else {
       console.warn('No audioUrl in TTS response', data);
     }
+
+    // HTTP viseme fallback if WS missed it
+    if (Array.isArray(data.visemes) && blendfacesWSHandler) {
+      const values = {};
+      for (const v of data.visemes) {
+        values[`viseme_${v.VisemeId}`] = 1;
+      }
+      blendfacesWSHandler({ type: 'blendshapes', values });
+    }
   } catch (err) {
     console.error('[TTS Error]', err);
   }
 }
 
-
-
 async function sendToAgent() {
   const inputEl = document.getElementById('agentInput');
   const msg = inputEl.value.trim();
-  if (!msg) return;
+  if (!msg) {
+    addChatEntry('agent', '[Please enter a message]');
+    return;
+  }
 
   addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
-    // 1️⃣ Get GPT reply
+    // 1) Get GPT reply
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
     if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
+
     const chatJson = await chatRes.json();
-    const reply = chatJson.text || '[No response]';
+    const reply = chatJson.text;
+
+    if (!reply || !reply.trim()) {
+      addChatEntry('agent', '[No response]');
+      return; // don't call TTS with empty text
+    }
+
+    // Show GPT's reply
     addChatEntry('agent', reply);
 
-    // 2️⃣ Send reply to TTS for audio + visemes
-    const ttsRes = await fetch(`${backendBase}/api/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: reply })
-    });
-    if (!ttsRes.ok) throw new Error(`TTS failed ${ttsRes.status}`);
-    const ttsJson = await ttsRes.json();
-
-    // Play audio
-    if (ttsJson.audioUrl) {
-      const audio = new Audio(ttsJson.audioUrl);
-      audio.crossOrigin = 'anonymous';
-      await audio.play();
-    }
-
-    // Apply visemes immediately if WS missed them
-    if (ttsJson.visemes && blendfacesWSHandler) {
-      blendfacesWSHandler({
-        type: 'blendshapes',
-        values: ttsJson.visemes.reduce((acc, v) => {
-          acc[`viseme_${v.VisemeId}`] = 1;
-          return acc;
-        }, {})
-      });
-    }
-
+    // 2) Speak reply (audio + visemes)
+    await speak(reply);
   } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
 }
-
-
 
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
@@ -314,4 +335,3 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
