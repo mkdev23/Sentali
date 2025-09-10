@@ -188,6 +188,17 @@ const wsClient = new WSClient({
 });
 wsClient.connect();
 
+function sanitizeForTTS(s) {
+  if (!s) return '';
+  // Drop our placeholder and trim
+  let t = s.replace(/\[No response\]/g, '').trim();
+  // Strip most emoji/pictographs (Azure Speech sometimes hates them; backend may reject)
+  t = t.replace(/\p{Extended_Pictographic}/gu, '');
+  // Collapse excessive whitespace
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
+}
+
 /* === Chat + TTS integration ===
    Split flow:
    - /api/chat -> reply text
@@ -195,34 +206,41 @@ wsClient.connect();
 */
 
 async function speak(text) {
-  // Guard: never call TTS with empty/whitespace
-  if (!text || !text.trim()) return;
+  const cleaned = sanitizeForTTS(text);
+  if (!cleaned) {
+    console.warn('[TTS] Skipping empty/unspeakable text');
+    return;
+  }
+
   try {
     const res = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text: cleaned })
     });
-    if (!res.ok) throw new Error(`TTS failed ${res.status}`);
 
-    const data = await res.json();
+    // Always read the body so we can see the backend error message
+    const contentType = res.headers.get('content-type') || '';
+    const body = contentType.includes('application/json') ? await res.json().catch(() => null)
+                                                          : await res.text().catch(() => '');
 
-    // Play returned audio
-    if (data.audioUrl) {
-      const audio = new Audio(data.audioUrl);
-      audio.crossOrigin = 'anonymous';
-      await audio.play();
-    } else {
-      console.warn('No audioUrl in TTS response', data);
+    if (!res.ok) {
+      console.error('[TTS Error]', res.status, body || '(no body)');
+      throw new Error(`TTS failed ${res.status}`);
     }
 
-    // HTTP viseme fallback if WS missed it
-    if (Array.isArray(data.visemes) && blendfacesWSHandler) {
-      const values = {};
-      for (const v of data.visemes) {
-        values[`viseme_${v.VisemeId}`] = 1;
+    if (body && body.audioUrl) {
+      const audio = new Audio(body.audioUrl);
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+      // HTTP viseme fallback if WS missed it
+      if (Array.isArray(body.visemes) && blendfacesWSHandler) {
+        const values = {};
+        for (const v of body.visemes) values[`viseme_${v.VisemeId}`] = 1;
+        blendfacesWSHandler({ type: 'blendshapes', values });
       }
-      blendfacesWSHandler({ type: 'blendshapes', values });
+    } else {
+      console.warn('No audioUrl in TTS response', body);
     }
   } catch (err) {
     console.error('[TTS Error]', err);
@@ -247,21 +265,28 @@ async function sendToAgent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
-    if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
 
-    const chatJson = await chatRes.json();
-    const reply = chatJson.text;
-
-    if (!reply || !reply.trim()) {
-      addChatEntry('agent', '[No response]');
-      return; // don't call TTS with empty text
+    const isJson = (chatRes.headers.get('content-type') || '').includes('application/json');
+    const chatBody = isJson ? await chatRes.json().catch(() => null)
+                            : await chatRes.text().catch(() => '');
+    if (!chatRes.ok) {
+      console.error('[Chat Error]', chatRes.status, chatBody || '(no body)');
+      addChatEntry('agent', '[Error contacting Agent]');
+      return;
     }
 
-    // Show GPT's reply
+    const replyRaw = (chatBody && (chatBody.text ?? chatBody.reply ?? chatBody.message)) || '';
+    const reply = replyRaw.toString();
+    if (!reply.trim()) {
+      addChatEntry('agent', '[No response]');
+      return;
+    }
+
     addChatEntry('agent', reply);
 
-    // 2) Speak reply (audio + visemes)
+    // 2) Speak reply (sanitizer ensures we don’t trip backend’s empty check)
     await speak(reply);
+
   } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
