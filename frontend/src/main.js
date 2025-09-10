@@ -363,9 +363,14 @@ function updateBlink() {
 // === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
-  const t = clock.getElapsedTime();
+
+  const dt = clock.getDelta();           // delta time for VRM update
+  const t  = clock.getElapsedTime();     // elapsed time for idle motions
 
   if (currentVRM) {
+    // ✅ Advance VRM's internal animation system (prevents T‑pose)
+    currentVRM.update(dt);
+
     // Default Joy if no active expression
     if (!hasActiveExpression) {
       currentVRM.expressionManager.setValue('Joy', 1.0);
@@ -389,8 +394,17 @@ function animate() {
 
     // Blinking
     updateBlink();
+
+    // Apply any queued expressions
+    applyExpressions(dt);
+
+    // Update Blendfaces if enabled
+    if (shouldUseBlendfaces()) {
+      blendfaces.update(dt);
+    }
   }
 
+  controls.update();
   renderer.render(scene, camera);
 }
 
