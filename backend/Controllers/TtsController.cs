@@ -1,3 +1,4 @@
+// TtsController.cs
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using SentaliApp.Services;
@@ -33,18 +34,19 @@ namespace SentaliApp.Controllers
 
             try
             {
-                // Sentiment → expression
+                // Sentiment → expression (expanded for more variety; maps to vrmMapping.ts)
                 var sentiment = await _sentiment.GetSentiment(req.Text);
                 var expression = sentiment switch
                 {
-                    "Positive" => "joy",
-                    "Negative" => "angry",
-                    _ => "neutral"
+                    "Positive" => "joy",       // Maps to 'happy'
+                    "Negative" => "angry",     // Maps to 'angry'
+                    "Mixed" => "surprised",    // Maps to 'surprised' for uncertainty
+                    _ => "neutral"             // Maps to 'neutral'
                 };
                 _logger.LogInformation("[TTS] Sentiment={Sentiment}, Expression={Expression}", sentiment, expression);
 
-                // Synthesis with timeout
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                // Synthesis with longer timeout (60s for longer texts)
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                 _logger.LogInformation("[TTS] Synthesis start");
                 var (audioBytes, visemes) = await _tts.SynthesizeWithVisemesAsync(req.Text, cts.Token);
                 _logger.LogInformation("[TTS] Synthesis done, {Len} bytes", audioBytes?.Length ?? 0);

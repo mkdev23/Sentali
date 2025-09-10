@@ -305,21 +305,25 @@ const visemeMap = {
   20: 'oh'
 };
 
-/* Prevent overlapping TTS calls */
+/* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
+let ttsAbortController = null;
+
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
-    console.warn('[TTS] Request in-flight; skipping new request');
-    updateChatEntry(agentDiv, 'agent', text);
-    return;
+    console.warn('[TTS] Request in-flight; aborting previous and starting new');
+    ttsAbortController?.abort();
+    updateChatEntry(agentDiv, 'agent', text); // Fallback to text if aborted
   }
   ttsInflight = true;
+  ttsAbortController = new AbortController();
   try {
     const clean = sanitizeForTTS(text);
     const res = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean })
+      body: JSON.stringify({ text: clean }),
+      signal: ttsAbortController.signal
     });
 
     if (!res.ok) {
@@ -381,8 +385,14 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
     });
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error('[TTS] Error:', err);
+      updateChatEntry(agentDiv, 'agent', text);
+    }
   } finally {
     ttsInflight = false;
+    ttsAbortController = null;
   }
 }
 
