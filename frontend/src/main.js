@@ -361,41 +361,43 @@ function updateBlink() {
   }
 }
 
-// === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
 
-  // Default Joy if no active expression
-  if (!hasActiveExpression) {
-    vrm.expressionManager.setValue('Joy', 1.0);
-    vrm.expressionManager.setValue('Neutral', 0.0);
+  if (currentVRM) {
+    // Default Joy if no active expression
+    if (!hasActiveExpression) {
+      currentVRM.expressionManager.setValue('Joy', 1.0);
+      currentVRM.expressionManager.setValue('Neutral', 0.0);
+    }
+
+    // Idle sway (spine)
+    const spine = currentVRM.humanoid.getBoneNode('Spine');
+    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+
+    // Breathing (chest)
+    const chest = currentVRM.humanoid.getBoneNode('Chest');
+    if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+
+    // Head/gaze idle motion
+    const head = currentVRM.humanoid.getBoneNode('Head');
+    if (head) {
+      head.rotation.y = Math.sin(t * 0.3) * 0.05;
+      head.rotation.x = Math.sin(t * 0.5) * 0.02;
+    }
+
+    // Blinking
+    updateBlink();
   }
-
-  // Idle sway (spine)
-  const spine = vrm.humanoid.getBoneNode('Spine');
-  if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-
-  // Breathing (chest)
-  const chest = vrm.humanoid.getBoneNode('Chest');
-  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
-
-  // Head/gaze idle motion
-  const head = vrm.humanoid.getBoneNode('Head');
-  if (head) {
-    head.rotation.y = Math.sin(t * 0.3) * 0.05; // gentle left-right
-    head.rotation.x = Math.sin(t * 0.5) * 0.02; // gentle nod
-  }
-
-  // Blinking
-  updateBlink();
 
   renderer.render(scene, camera);
 }
-
 // === Handle resize ===
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+animate();
