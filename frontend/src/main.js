@@ -177,6 +177,7 @@ async function speak(text) {
     if (!res.ok) throw new Error(`TTS failed ${res.status}`);
 
     const data = await res.json();
+
     if (data.audioUrl) {
       const audio = new Audio(data.audioUrl);
       audio.crossOrigin = 'anonymous';
@@ -189,6 +190,8 @@ async function speak(text) {
   }
 }
 
+
+
 async function sendToAgent() {
   const inputEl = document.getElementById('agentInput');
   const msg = inputEl.value.trim();
@@ -199,37 +202,28 @@ async function sendToAgent() {
   inputEl.value = '';
 
   try {
-    // Send the user’s message directly to /api/tts
-    const ttsRes = await fetch(`${backendBase}/api/tts`, {
+    // 1️⃣ Get GPT reply from /api/chat
+    const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
-    if (!ttsRes.ok) throw new Error(`TTS failed ${ttsRes.status}`);
+    if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
 
-    const ttsJson = await ttsRes.json();
+    const chatJson = await chatRes.json();
+    const reply = chatJson.text || '[No response]';
 
-    // Show GPT's reply from the TTS endpoint
-    addChatEntry('agent', ttsJson.text || '[No response]');
+    // Show GPT's reply in the chat log
+    addChatEntry('agent', reply);
 
-    // Play the audio
-    if (ttsJson.audioUrl) {
-      const audio = new Audio(ttsJson.audioUrl);
-      audio.crossOrigin = 'anonymous';
-      await audio.play();
-    }
-
-    // If you want to manually trigger visemes/expression from the HTTP response
-    // (in addition to the WebSocket broadcast), you could do it here:
-    // blendfacesWSHandler({ type: 'blendshapes', ...ttsJson });
+    // 2️⃣ Send GPT reply to /api/tts for synthesis
+    await speak(reply);
 
   } catch (err) {
-    console.error('[Agent/TTS Error]', err);
+    console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
 }
-
-
 
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
