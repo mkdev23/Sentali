@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sentali Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body, #c {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #111;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+
+    /* Top-left controls */
+    #control-panel {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      background: rgba(0,0,0,0.65);
+      padding: 8px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    button {
+      background: #1e88e5;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s ease;
+    }
+    button:hover { background: #1565c0; }
+
+    label { color: white; font-size: 14px; }
+
+    /* Chat log above chat bar */
+    #chat-log {
+      position: fixed;
+      bottom: 48px;
+      left: 0;
+      width: 100%;
+      max-height: 150px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.5);
+      padding: 6px;
+      font-size: 13px;
+      color: #ddd;
+      z-index: 9;
+    }
+    .chat-entry { margin-bottom: 4px; }
+    .chat-user { color: #90caf9; }
+    .chat-agent { color: #a5d6a7; }
+
+    /* Bottom chat bar */
+    #chat-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0,0,0,0.75);
+      padding: 8px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      z-index: 10;
+    }
+
+    #agentInput {
+      flex: 1;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #222;
+      color: white;
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-CNnVNOGx.js"></script>
+</head>
+<body>
+  <!-- Top-left controls -->
+  <div id="control-panel">
+    <button id="speakTestBtn">Test Speak</button>
+    <button id="test">Local Test (aa)</button>
+    <button id="unlockAudio">Enable Audio</button>
+    <label>
+      <input type="checkbox" id="blendfacesToggle" checked />
+      Use Blendfaces
+    </label>
+  </div>
+
+  <!-- Chat log -->
+  <div id="chat-log"></div>
+
+  <!-- Bottom chat bar -->
+  <div id="chat-bar">
+    <input type="text" id="agentInput" placeholder="Ask Sentali..." />
+    <button id="agentSendBtn">Send</button>
+    <button id="micBtn" title="Speak to Sentali">🎤</button>
+  </div>
+
+  <!-- VRM canvas -->
+  <canvas id="c"></canvas>
+
+</body>
+</html>
