@@ -12,26 +12,23 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-    # 1. Checkout repo
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 2. Build frontend
+    # Build frontend
     - name: Build frontend
       run: |
         cd frontend
         npm ci
         npm run build
-        mkdir -p ../backend/wwwroot
-        cp -r dist/* ../backend/wwwroot/
 
-    # 3. Setup .NET
+    # Setup .NET
     - name: Setup .NET 9
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
 
-    # 4. Login to Azure with OIDC
+    # Login to Azure
     - name: Login to Azure with OIDC
       uses: azure/login@v2
       with:
@@ -39,13 +36,25 @@ jobs:
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    # 5. Publish backend
+    # Publish backend
     - name: Publish .NET app
       run: dotnet publish backend/SentaliApp.csproj -c Release -o ./publish
 
-    # 6. Deploy to Azure Web App
+    # Copy frontend into publish output
+    - name: Copy frontend to publish output
+      run: |
+        rm -rf ./publish/wwwroot/*
+        cp -r frontend/dist/* ./publish/wwwroot/
+
+    # Deploy to Azure
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v3
       with:
         app-name: sentali-app-6926
         package: ./publish
+
+    # Verify asset exists
+    - name: Verify frontend asset
+      run: |
+        HASHED_JS=$(grep -oP 'assets/index-[^"]+\.js' frontend/dist/index.html | head -n 1)
+        curl -I "https://sentali-app-6926.azurewebsites.net/$HASHED_JS"
