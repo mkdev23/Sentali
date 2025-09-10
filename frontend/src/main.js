@@ -203,7 +203,11 @@ function handleBlink(delta) {
   if (blinkTimer <= 0) {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
     mgr.setValue('Blink', 1.0);
-    setTimeout(() => mgr.setValue('Blink', 0.0), 150);
+    mgr.update();
+    setTimeout(() => {
+      mgr.setValue('Blink', 0.0);
+      mgr.update();
+    }, 150);
     blinkTimer = 2 + Math.random() * 3;
   }
 }
