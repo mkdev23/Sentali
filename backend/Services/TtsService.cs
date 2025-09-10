@@ -16,20 +16,17 @@ namespace SentaliApp.Services
 
         public TtsService(IConfiguration config)
         {
-            // Your Speech endpoint, e.g. "https://<your-resource>.tts.speech.azure.com"
             var endpointUrl = config["SPEECH_ENDPOINT"]
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
 
-            // Acquire a token using Managed Identity
             var cred = new DefaultAzureCredential();
             var token = cred.GetToken(
                 new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" }),
                 default);
 
-            Console.WriteLine("[TTS] Acquired Managed Identity token");
+            Console.WriteLine("[TTS] Acquired MI token");
 
-            // Build SpeechConfig from the token
             _speechConfig = SpeechConfig.FromAuthorizationToken(
                 token.Token,
                 endpointUri.Host);
@@ -40,11 +37,12 @@ namespace SentaliApp.Services
 
         /// <summary>
         /// Synthesizes speech for the given text, capturing viseme events.
-        /// Returns the raw audio bytes plus a list of VisemeEventArgs.
+        /// Returns raw audio bytes plus a list of SpeechSynthesisVisemeEventArgs.
         /// </summary>
-        public async Task<(byte[] Audio, List<VisemeEventArgs> Visemes)> SynthesizeWithVisemesAsync(string text)
+        public async Task<(byte[] Audio, List<SpeechSynthesisVisemeEventArgs> Visemes)>
+            SynthesizeWithVisemesAsync(string text)
         {
-            var visemeList = new List<VisemeEventArgs>();
+            var visemes = new List<SpeechSynthesisVisemeEventArgs>();
 
             using var audioStream = AudioOutputStream.CreatePullStream();
             using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
@@ -52,14 +50,13 @@ namespace SentaliApp.Services
 
             synthesizer.VisemeReceived += (_, e) =>
             {
-                visemeList.Add(e);
+                visemes.Add(e);
             };
 
             var result = await synthesizer.SpeakTextAsync(text);
             if (result.Reason != ResultReason.SynthesizingAudioCompleted)
                 throw new Exception($"TTS failed: {result.Reason}");
 
-            // Read out the audio bytes
             await using var ms = new MemoryStream();
             var buffer = new byte[32_000];
             uint bytesRead;
@@ -68,7 +65,7 @@ namespace SentaliApp.Services
                 ms.Write(buffer, 0, (int)bytesRead);
             }
 
-            return (ms.ToArray(), visemeList);
+            return (ms.ToArray(), visemes);
         }
     }
 }

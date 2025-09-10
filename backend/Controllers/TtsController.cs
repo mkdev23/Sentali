@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.CognitiveServices.Speech;       // for VisemeEventArgs
+using Microsoft.CognitiveServices.Speech;   // for SpeechConfig, SpeechSynthesisVisemeEventArgs, ResultReason
+using Microsoft.CognitiveServices.Speech.Audio;  // for AudioConfig, AudioOutputStream
 using SentaliApp.Services;
 
 namespace SentaliApp.Controllers
@@ -47,9 +48,9 @@ namespace SentaliApp.Controllers
 
                 // 1) Get GPT reply
                 var reply = await _gpt.GetResponse(text);
-                _logger.LogInformation("[TTS] GPT Response: {Reply}", reply);
+                _logger.LogInformation("[TTS] GPT → {Reply}", reply);
 
-                // 2) Determine sentiment → expression
+                // 2) Sentiment → expression
                 var sentiment  = await _sentiment.GetSentiment(reply);
                 var expression = sentiment switch
                 {
@@ -57,15 +58,16 @@ namespace SentaliApp.Controllers
                     "Negative" => "angry",
                     _          => "neutral"
                 };
+
                 _logger.LogInformation(
                     "[TTS] Sentiment: {Sentiment}, Expression: {Expression}",
                     sentiment, expression);
 
-                // 3) Synthesize speech + visemes
-                (byte[] audioBytes, List<VisemeEventArgs> visemes) 
+                // 3) Synthesize + visemes
+                (byte[] audioBytes, List<SpeechSynthesisVisemeEventArgs> visemes) 
                     = await _tts.SynthesizeWithVisemesAsync(reply);
 
-                // 4) Upload audio to Blob and get SAS URL
+                // 4) Upload audio, get URL
                 var audioUrl = await _blob.UploadAndGetSas(audioBytes);
 
                 // 5) Build viseme payload
@@ -79,14 +81,14 @@ namespace SentaliApp.Controllers
                     });
                 }
 
-                // 6) Default to joy if no visemes
+                // 6) Default to joy if no visemes emitted
                 if (visemePayload.Count == 0)
                 {
                     visemePayload.Add(new { VisemeId = 0, TimeMs = 0 });
                     expression = "joy";
                 }
 
-                // 7) Broadcast to WebSockets
+                // 7) Broadcast blendshapes + audio
                 _ws.Broadcast(new
                 {
                     type       = "blendshapes",
@@ -95,7 +97,7 @@ namespace SentaliApp.Controllers
                     visemes    = visemePayload
                 });
 
-                // 8) Return structured JSON
+                // 8) Return to caller
                 return Ok(new
                 {
                     text       = reply,
