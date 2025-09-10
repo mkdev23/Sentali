@@ -192,6 +192,64 @@ function sanitizeForTTS(s) {
   }
   return out.trim();
 }
+/* Ambient state & behaviours (countdown) */
+let chestBaseY    = 0;
+let blinkTimer    = 2 + Math.random() * 3;
+let gazeTimer     = 2 + Math.random() * 2;
+let gazeDirection = 0;
+
+function handleBlink(delta) {
+  blinkTimer -= delta;
+  if (blinkTimer <= 0) {
+    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    mgr.setValue('Blink', 1.0);
+    setTimeout(() => mgr.setValue('Blink', 0.0), 150);
+    blinkTimer = 2 + Math.random() * 3;
+  }
+}
+
+function handleGaze(delta) {
+  gazeTimer -= delta;
+  if (gazeTimer <= 0) {
+    gazeDirection = (Math.random() - 0.5) * 0.2;
+    gazeTimer = 2 + Math.random() * 2;
+  }
+  const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+}
+
+function handleBreath(t) {
+  const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
+  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+}
+
+/* Load VRM + initialize ambient timers */
+function initAvatar(vrm) {
+  const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
+  if (chest) chestBaseY = chest.position.y;
+  blinkTimer    = 2 + Math.random() * 3;
+  gazeTimer     = 2 + Math.random() * 2;
+  gazeDirection = 0;
+}
+
+loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
+  currentVRM = vrm;
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI;
+
+  controls.target.set(0, 1.6, 0);
+  controls.update();
+
+  initAvatar(vrm);
+
+  blendfaces = new BlendfacesController(vrm, {
+    expressionMap,
+    smooth: 0.3,
+    decay: 1.5,
+    rest: { blink: 0.0, neutral: 1.0 }
+  });
+  blendfaces.attachWS(cb => blendfacesWSHandler = cb);
+});
 
 /* Prevent overlapping TTS calls */
 let ttsInflight = false;
