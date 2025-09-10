@@ -217,11 +217,15 @@ function handleGaze(delta) {
     gazeDirection = (Math.random() - 0.5) * 0.2;
     gazeTimer = 2 + Math.random() * 2;
   }
-  const head = currentVRM.humanoid.getNormalizedBoneNode('head');
+  let head = currentVRM.humanoid.getNormalizedBoneNode('head');
+  if (!head) {
+    head = vrm.scene.getObjectByName('Head');
+    if (head) console.log('[Gaze] Fell back to raw Head bone');
+  }
   if (head) {
     head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
   } else {
-    console.warn('[Ambient] No head bone found');
+    console.warn('[Ambient] No head bone found (normalized or raw)');
   }
 }
 
@@ -232,10 +236,14 @@ function handleBreath(t) {
     chest = currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
     if (chest) console.log('[Breath] Fell back to upper_chest');
   }
+  if (!chest) {
+    chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
+    if (chest) console.log('[Breath] Fell back to raw Spine1/2 bone');
+  }
   if (chest) {
-    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01; // Amped for visibility
   } else {
-    console.warn('[Ambient] No chest/upper_chest bone found');
+    console.warn('[Ambient] No chest/upper_chest bone found (normalized or raw)');
   }
 }
 
@@ -243,6 +251,7 @@ function handleBreath(t) {
 function initAvatar(vrm) {
   let chest = vrm.humanoid.getNormalizedBoneNode('chest');
   if (!chest) chest = vrm.humanoid.getNormalizedBoneNode('upper_chest');
+  if (!chest) chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
   if (chest) chestBaseY = chest.position.y;
   blinkTimer = 2 + Math.random() * 3;
   gazeTimer = 2 + Math.random() * 2;
@@ -493,7 +502,7 @@ function animate() {
     // default neutral "Joy" expression
     if (Object.keys(activeExpr).length === 0 && !shouldUseBlendfaces()) {
       const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-      mgr.setValue('happy', 1.0); // Updated to match model (was 'Joy')
+      mgr.setValue('happy', 1.0); // Updated to match model
       mgr.setValue('neutral', 0.0);
     }
 
@@ -502,7 +511,13 @@ function animate() {
     if (spine) {
       spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
     } else {
-      console.warn('[Ambient] No spine bone found');
+      let fallbackSpine = vrm.scene.getObjectByName('Spine');
+      if (fallbackSpine) {
+        fallbackSpine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+        console.log('[Sway] Fell back to raw Spine bone');
+      } else {
+        console.warn('[Ambient] No spine bone found (normalized or raw)');
+      }
     }
 
     // 1) expressions/visemes
