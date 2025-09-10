@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace SentaliApp.Services
 {
@@ -15,119 +16,146 @@ namespace SentaliApp.Services
         private readonly string _agentId;
         private readonly string _projectEndpoint;
         private readonly string? _projectApiKey;
+        private readonly string _apiVersion; // make API version configurable
         private readonly HttpClient _http;
+        private readonly ILogger<GptService> _logger;
 
-        public GptService(IConfiguration config)
+        public GptService(IConfiguration config, ILogger<GptService> logger)
         {
+            _logger = logger;
+
             _agentId = config["AZURE_AI_AGENT_ID"]
                 ?? throw new Exception("Missing AZURE_AI_AGENT_ID");
             _projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"]
                 ?? throw new Exception("Missing AZURE_AI_PROJECT_ENDPOINT");
             _projectApiKey = config["AZURE_AI_PROJECT_KEY"]; // optional
+            _apiVersion = config["AZURE_AI_API_VERSION"] ?? "2025-05-01";
+
             _http = new HttpClient();
         }
 
-        private async Task<HttpResponseMessage> SendWithLogging(Func<Task<HttpResponseMessage>> send, string step)
+        private async Task<HttpResponseMessage> SendWithLogging(Func<Task<HttpResponseMessage>> send, string step, string urlForLog)
         {
             var res = await send();
             if (!res.IsSuccessStatusCode)
             {
                 var body = await res.Content.ReadAsStringAsync();
-                Console.Error.WriteLine($"[Assistants REST] {step} failed: {(int)res.StatusCode} {res.StatusCode} → {body}");
+                _logger.LogError("[Assistants REST] {Step} failed ({StatusCode}): {Url}\n{Body}",
+                                 step, (int)res.StatusCode, urlForLog, body);
                 throw new HttpRequestException($"{step} failed: {(int)res.StatusCode} {res.StatusCode} → {body}");
             }
+            _logger.LogInformation("[Assistants REST] {Step} succeeded ({StatusCode}): {Url}",
+                                   step, (int)res.StatusCode, urlForLog);
             return res;
         }
 
         public async Task<string> GetResponse(string input)
         {
-            Console.WriteLine($"[Assistants REST] Endpoint: {_projectEndpoint}");
-            Console.WriteLine($"[Assistants REST] AssistantId: {_agentId}");
-
-            _http.DefaultRequestHeaders.Clear();
-            if (!string.IsNullOrEmpty(_projectApiKey))
+            try
             {
-                Console.WriteLine("[Assistants REST] Using API Key");
-                _http.DefaultRequestHeaders.Add("api-key", _projectApiKey);
-            }
-            else
-            {
-                Console.WriteLine("[Assistants REST] Using Managed Identity");
-                var cred = new DefaultAzureCredential();
-                var token = await cred.GetTokenAsync(
-                    new TokenRequestContext(new[] { "https://ai.azure.com/.default" }));
-                _http.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token.Token);
-            }
+                _logger.LogInformation("[Assistants REST] Endpoint: {Endpoint}", _projectEndpoint);
+                _logger.LogInformation("[Assistants REST] AssistantId: {AssistantId}", _agentId);
+                _logger.LogInformation("[Assistants REST] API version: {ApiVersion}", _apiVersion);
 
-            // 2) Create a thread
-            var threadUrl = $"{_projectEndpoint}/threads?api-version=2025-05-01";
-            var threadRes = await SendWithLogging(
-                () => _http.PostAsync(threadUrl, new StringContent("{}", Encoding.UTF8, "application/json")),
-                "CreateThread");
-            var threadJson = await threadRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Assistants REST] CreateThread → {threadJson}");
-            var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString()!;
-
-            // 3) Post the user message
-            var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version=2025-05-01";
-            var msgPayload = JsonSerializer.Serialize(new { role = "user", content = input });
-            var msgRes = await SendWithLogging(
-                () => _http.PostAsync(msgUrl, new StringContent(msgPayload, Encoding.UTF8, "application/json")),
-                "PostMessage");
-            Console.WriteLine($"[Assistants REST] PostMessage → {await msgRes.Content.ReadAsStringAsync()}");
-
-            // 4) Create a run
-            var runUrl = $"{_projectEndpoint}/threads/{threadId}/runs?api-version=2025-05-01";
-            var runPayload = JsonSerializer.Serialize(new { assistant_id = _agentId });
-            var runRes = await SendWithLogging(
-                () => _http.PostAsync(runUrl, new StringContent(runPayload, Encoding.UTF8, "application/json")),
-                "CreateRun");
-            var runJson = await runRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Assistants REST] CreateRun → {runJson}");
-            var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString()!;
-
-            // 5) Poll until the run completes
-            string status;
-            do
-            {
-                await Task.Delay(500);
-                var statusUrl = $"{_projectEndpoint}/threads/{threadId}/runs/{runId}?api-version=2025-05-01";
-                var statusRes = await SendWithLogging(() => _http.GetAsync(statusUrl), "GetRunStatus");
-                var statusJson = await statusRes.Content.ReadAsStringAsync();
-                status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString()!;
-                Console.WriteLine($"[Assistants REST] Run status: {status}");
-                if (status == "failed")
+                // Auth headers
+                _http.DefaultRequestHeaders.Clear();
+                if (!string.IsNullOrEmpty(_projectApiKey))
                 {
-                    var err = JsonDocument.Parse(statusJson)
-                        .RootElement.GetProperty("last_error").GetProperty("message").GetString();
-                    throw new Exception($"Assistant run failed: {err}");
+                    _logger.LogInformation("[Assistants REST] Using API Key");
+                    _http.DefaultRequestHeaders.Add("api-key", _projectApiKey);
                 }
-            }
-            while (status is "queued" or "in_progress");
-
-            // 6) Fetch all messages
-            var messagesUrl = $"{_projectEndpoint}/threads/{threadId}/messages?order=asc&api-version=2025-05-01";
-            var messagesRes = await SendWithLogging(() => _http.GetAsync(messagesUrl), "GetMessages");
-            var messagesJson = await messagesRes.Content.ReadAsStringAsync();
-            Console.WriteLine($"[Assistants REST] Messages → {messagesJson}");
-
-            using var doc = JsonDocument.Parse(messagesJson);
-            foreach (var msg in doc.RootElement.GetProperty("data").EnumerateArray())
-            {
-                if (msg.GetProperty("role").GetString() == "assistant")
+                else
                 {
-                    foreach (var part in msg.GetProperty("content").EnumerateArray())
+                    _logger.LogInformation("[Assistants REST] Using Managed Identity");
+                    var cred = new DefaultAzureCredential();
+                    var token = await cred.GetTokenAsync(
+                        new TokenRequestContext(new[] { "https://ai.azure.com/.default" }));
+                    _http.DefaultRequestHeaders.Authorization =
+                        new AuthenticationHeaderValue("Bearer", token.Token);
+                }
+
+                // 1) Create a thread
+                var threadUrl = $"{_projectEndpoint}/threads?api-version={_apiVersion}";
+                var threadRes = await SendWithLogging(
+                    () => _http.PostAsync(threadUrl, new StringContent("{}", Encoding.UTF8, "application/json")),
+                    "CreateThread", threadUrl);
+
+                var threadJson = await threadRes.Content.ReadAsStringAsync();
+                _logger.LogInformation("[Assistants REST] CreateThread → {Json}", threadJson);
+                var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString()!;
+
+                // 2) Post the user message
+                var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version={_apiVersion}";
+                var msgPayload = JsonSerializer.Serialize(new { role = "user", content = input });
+                var msgRes = await SendWithLogging(
+                    () => _http.PostAsync(msgUrl, new StringContent(msgPayload, Encoding.UTF8, "application/json")),
+                    "PostMessage", msgUrl);
+
+                _logger.LogInformation("[Assistants REST] PostMessage → {Json}", await msgRes.Content.ReadAsStringAsync());
+
+                // 3) Create a run
+                var runUrl = $"{_projectEndpoint}/threads/{threadId}/runs?api-version={_apiVersion}";
+                var runPayload = JsonSerializer.Serialize(new { assistant_id = _agentId });
+                var runRes = await SendWithLogging(
+                    () => _http.PostAsync(runUrl, new StringContent(runPayload, Encoding.UTF8, "application/json")),
+                    "CreateRun", runUrl);
+
+                var runJson = await runRes.Content.ReadAsStringAsync();
+                _logger.LogInformation("[Assistants REST] CreateRun → {Json}", runJson);
+                var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString()!;
+
+                // 4) Poll until the run completes
+                string status;
+                do
+                {
+                    await Task.Delay(500);
+                    var statusUrl = $"{_projectEndpoint}/threads/{threadId}/runs/{runId}?api-version={_apiVersion}";
+                    var statusRes = await SendWithLogging(() => _http.GetAsync(statusUrl), "GetRunStatus", statusUrl);
+
+                    var statusJson = await statusRes.Content.ReadAsStringAsync();
+                    status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString()!;
+                    _logger.LogInformation("[Assistants REST] Run status: {Status}", status);
+
+                    if (status == "failed")
                     {
-                        if (part.GetProperty("type").GetString() == "text")
+                        var err = JsonDocument.Parse(statusJson)
+                            .RootElement.TryGetProperty("last_error", out var lastErr)
+                                && lastErr.TryGetProperty("message", out var msg)
+                            ? msg.GetString()
+                            : "unknown";
+                        throw new Exception($"Assistant run failed: {err}");
+                    }
+                }
+                while (status is "queued" or "in_progress");
+
+                // 5) Fetch all messages and return the assistant reply
+                var messagesUrl = $"{_projectEndpoint}/threads/{threadId}/messages?order=asc&api-version={_apiVersion}";
+                var messagesRes = await SendWithLogging(() => _http.GetAsync(messagesUrl), "GetMessages", messagesUrl);
+                var messagesJson = await messagesRes.Content.ReadAsStringAsync();
+                _logger.LogInformation("[Assistants REST] Messages → {Json}", messagesJson);
+
+                using var doc = JsonDocument.Parse(messagesJson);
+                foreach (var msgItem in doc.RootElement.GetProperty("data").EnumerateArray())
+                {
+                    if (msgItem.GetProperty("role").GetString() == "assistant")
+                    {
+                        foreach (var part in msgItem.GetProperty("content").EnumerateArray())
                         {
-                            return part.GetProperty("text").GetProperty("value").GetString() ?? "[No response text]";
+                            if (part.GetProperty("type").GetString() == "text")
+                            {
+                                return part.GetProperty("text").GetProperty("value").GetString() ?? "[No response text]";
+                            }
                         }
                     }
                 }
-            }
 
-            return "[No assistant message found]";
+                return "[No assistant message found]";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Assistants REST] Unhandled exception in GetResponse");
+                throw;
+            }
         }
     }
 }
