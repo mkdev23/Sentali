@@ -197,33 +197,55 @@ async function sendToAgent() {
   const msg = inputEl.value.trim();
   if (!msg) return;
 
-  // Show the user’s message in the chat log
   addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
-    // 1️⃣ Get GPT reply from /api/chat
+    // 1️⃣ Get GPT reply
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
     if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
-
     const chatJson = await chatRes.json();
     const reply = chatJson.text || '[No response]';
-
-    // Show GPT's reply in the chat log
     addChatEntry('agent', reply);
 
-    // 2️⃣ Send GPT reply to /api/tts for synthesis
-    await speak(reply);
+    // 2️⃣ Send reply to TTS for audio + visemes
+    const ttsRes = await fetch(`${backendBase}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: reply })
+    });
+    if (!ttsRes.ok) throw new Error(`TTS failed ${ttsRes.status}`);
+    const ttsJson = await ttsRes.json();
+
+    // Play audio
+    if (ttsJson.audioUrl) {
+      const audio = new Audio(ttsJson.audioUrl);
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+    }
+
+    // Apply visemes immediately if WS missed them
+    if (ttsJson.visemes && blendfacesWSHandler) {
+      blendfacesWSHandler({
+        type: 'blendshapes',
+        values: ttsJson.visemes.reduce((acc, v) => {
+          acc[`viseme_${v.VisemeId}`] = 1;
+          return acc;
+        }, {})
+      });
+    }
 
   } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
 }
+
+
 
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
