@@ -284,7 +284,7 @@ async function sendToAgent() {
 
     addChatEntry('agent', reply);
 
-    // 2) Speak reply (sanitizer ensures we don’t trip backend’s empty check)
+    // 2) Speak reply
     await speak(reply);
 
   } catch (err) {
@@ -344,23 +344,23 @@ let hasActiveExpression = false;
 let nextBlink = 0;
 
 function initAvatar(vrm) {
-  const chest = vrm.humanoid.getBoneNode('Chest');
+  const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
   if (chest) chestBaseY = chest.position.y;
-
-  // Schedule first blink
   nextBlink = clock.getElapsedTime() + 3 + Math.random() * 2;
 }
 
 // Blink updater
 function updateBlink() {
+  if (!currentVRM) return;
   const now = clock.getElapsedTime();
   if (now > nextBlink) {
-    vrm.expressionManager.setValue('Blink', 1.0);
-    setTimeout(() => vrm.expressionManager.setValue('Blink', 0.0), 150);
+    currentVRM.expressionManager.setValue('Blink', 1.0);
+    setTimeout(() => currentVRM.expressionManager.setValue('Blink', 0.0), 150);
     nextBlink = now + 3 + Math.random() * 2;
   }
 }
 
+// === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
@@ -373,15 +373,15 @@ function animate() {
     }
 
     // Idle sway (spine)
-    const spine = currentVRM.humanoid.getBoneNode('Spine');
+    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
     if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
 
     // Breathing (chest)
-    const chest = currentVRM.humanoid.getBoneNode('Chest');
+    const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
     if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
 
     // Head/gaze idle motion
-    const head = currentVRM.humanoid.getBoneNode('Head');
+    const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
     if (head) {
       head.rotation.y = Math.sin(t * 0.3) * 0.05;
       head.rotation.x = Math.sin(t * 0.5) * 0.02;
@@ -393,6 +393,7 @@ function animate() {
 
   renderer.render(scene, camera);
 }
+
 // === Handle resize ===
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
