@@ -1,53 +1,106 @@
+// main.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { expressionMap } from './vrmMapping.js';
 import { loadVRM } from './vrmUtils.js';
-import { loadHDRSkybox } from './SkyboxLoader.js';
 import { WSClient } from './ws.js';
 import { BlendfacesController } from './blendfaces.js';
+import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
 const blendfacesToggle = document.getElementById('blendfacesToggle');
-const backendBase = '';    // e.g. '' or '/.auth/me' if you proxy auth
+const backendBase = '';
 
 /* === Scene setup === */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(30, window.innerWidth/window.innerHeight, 0.1, 20);
-camera.position.set(0, 1.4, 1.5);
+const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200); // FOV narrowed to 25
+camera.position.set(0, 1.6, 4.5); // pulled back for sharper background
+camera.updateProjectionMatrix();
 
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
   canvas: document.getElementById('c')
 });
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // crisp without overkill
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
 
-loadHDRSkybox(renderer, scene, camera, '/skybox/background1.hdr');
-
+/* === OrbitControls === */
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.4, 0);
+controls.target.set(0, 1.6, 0); // head height
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.0;
+controls.maxDistance = 6.0;
 controls.update();
 
+/* === Lighting === */
 scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-scene.add(new THREE.GridHelper(10, 10));
-
 const lights = [
   new THREE.DirectionalLight(0xffffff, 1.2),
   new THREE.DirectionalLight(0xffffff, 0.6),
   new THREE.DirectionalLight(0xffffff, 0.8)
 ];
-lights[0].position.set( 0.5, 1, 0.8 );
-lights[1].position.set(-0.5, 0.8,-0.8 );
-lights[2].position.set( 0,   1,-1    );
-lights.forEach(l=> scene.add(l));
+lights[0].position.set(0.5, 1, 0.8);
+lights[1].position.set(-0.5, 0.8, -0.8);
+lights[2].position.set(0, 1, -1);
+lights.forEach(l => scene.add(l));
+
+/* === Separate groups for VRM and background === */
+const vrmGroup = new THREE.Group();
+const skyGroup = new THREE.Group();
+scene.add(vrmGroup);
+scene.add(skyGroup);
 
 let currentVRM, blendfaces, blendfacesWSHandler;
 const clock = new THREE.Clock();
 
+/* === Load Skybox (rotated to screens, unlit, high quality) === */
+(async () => {
+  try {
+    const sb = await loadGLBSkybox('/skybox/sentali_skybox.glb', scene, camera, {
+      desiredRadius: camera.far * 0.9,
+      setSceneBackground: true
+    });
+    if (sb) {
+      const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
+      sb.traverse(child => {
+        if (child.isMesh) {
+          const tex = child.material.map || child.material.emissiveMap || null;
+          if (tex) {
+            tex.mapping = THREE.EquirectangularReflectionMapping;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.flipY = false;
+            tex.generateMipmaps = true;
+            tex.minFilter = THREE.LinearMipmapLinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.anisotropy = maxAniso;
+            scene.background = tex;
+          }
+          child.material = new THREE.MeshBasicMaterial({
+            map: tex,
+            side: THREE.BackSide,
+            toneMapped: false
+          });
+        }
+      });
+      sb.rotation.y = Math.PI; // screens facing camera
+      sb.scale.setScalar(camera.far * 0.9);
+      skyGroup.add(sb);
+    }
+  } catch (err) {
+    console.error('Skybox load failed:', err);
+  }
+})();
+
 /* === Load VRM and Blendfaces === */
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   currentVRM = vrm;
-  vrm.scene.rotation.y = Math.PI;
-  controls.target.set(0,1.4,0);
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI; // face camera
+
+  controls.target.set(0, 1.6, 0);
   controls.update();
 
   blendfaces = new BlendfacesController(vrm, {
@@ -56,7 +109,6 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
     decay: 1.5,
     rest: { blink: 0.0, neutral: 1.0 }
   });
-
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
 });
 
@@ -64,7 +116,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
 const activeExpr = {};
 const DECAY_EMO = 3.0, DECAY_VISEME = 10.0, SMOOTH = 0.4;
 
-function setExpressionPersistent(name, weight, decay=DECAY_EMO) {
+function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
   const mapped = expressionMap[name] ?? name;
   activeExpr[mapped] = { weight, decay };
 }
@@ -88,13 +140,13 @@ function shouldUseBlendfaces() {
 /* === WebSocket for visemes & blendshapes === */
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
-  onOpen: ()=> console.log('✅ WS connected'),
+  onOpen: () => console.log('✅ WS connected'),
   onMessage: data => {
     if (data.type === 'blendshape') {
       setExpressionPersistent(data.name, data.weight ?? 1, DECAY_EMO);
     }
     if (data.type === 'blendshapes') {
-      for (const [n,w] of Object.entries(data.values)) {
+      for (const [n, w] of Object.entries(data.values)) {
         setExpressionPersistent(n, Number(w), DECAY_EMO);
       }
     }
@@ -102,12 +154,11 @@ const wsClient = new WSClient({
       setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
     }
     if (data.audio) {
-      // optional: if your server pushes an audio URL to play
       const url = data.audio.startsWith('/') ? `${backendBase}${data.audio}` : data.audio;
-      new Audio(url).play().catch(e=>console.warn(e));
+      new Audio(url).play().catch(e => console.warn(e));
     }
   },
-  onClose: ()=> console.log('❌ WS disconnected')
+  onClose: () => console.log('❌ WS disconnected')
 });
 wsClient.connect();
 
@@ -115,18 +166,17 @@ wsClient.connect();
 async function speak(text) {
   try {
     const res = await fetch(`${backendBase}/api/tts`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text })
     });
     if (!res.ok) throw new Error(`TTS failed ${res.status}`);
     const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.crossOrigin = 'anonymous';
     await audio.play();
-  }
-  catch(err) {
+  } catch (err) {
     console.error('[TTS Error]', err);
   }
 }
@@ -139,21 +189,17 @@ async function sendToAgent() {
   inputEl.value = '';
 
   try {
-    // 1) Chat call → JSON { text }
     const chatRes = await fetch(`${backendBase}/api/chat`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
     if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
     const chatJson = await chatRes.json();
     const reply = chatJson.text || '[No response]';
     addChatEntry('agent', reply);
-
-    // 2) TTS playback (lip-sync via WS visemes)
     await speak(reply);
-  }
-  catch(err) {
+  } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
@@ -176,7 +222,7 @@ function initMicButton() {
     micBtn.title = 'Speech recognition not supported';
     return;
   }
-  micBtn.addEventListener('click', ()=>{
+  micBtn.addEventListener('click', () => {
     const recog = new webkitSpeechRecognition();
     recog.lang = 'en-US';
     recog.interimResults = false;
@@ -187,7 +233,11 @@ function initMicButton() {
       document.getElementById('agentInput').value = t;
       sendToAgent();
     };
-    recog.onerror = e => addChatEntry('agent', `[Mic error: ${e.error}]`);
+
+    recog.onerror = e => {
+      addChatEntry('agent', `[Mic error: ${e.error}]`);
+    };
+
     recog.start();
   });
 }
@@ -204,19 +254,22 @@ initUI();
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
+
   if (currentVRM) {
     currentVRM.update(dt);
     applyExpressions(dt);
     if (shouldUseBlendfaces()) blendfaces.update(dt);
   }
+
   controls.update();
   renderer.render(scene, camera);
 }
 animate();
 
 /* === Handle resize === */
-window.addEventListener('resize', ()=>{
-  camera.aspect = window.innerWidth/window.innerHeight;
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+

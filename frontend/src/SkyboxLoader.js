@@ -1,17 +1,18 @@
-// scripts/src/SkyboxLoader.js
 import * as THREE from 'three';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
 /**
  * Loads an HDRI for both high-res visuals and PBR lighting.
  * @param {THREE.WebGLRenderer} renderer
- * @param {THREE.Scene} scene
- * @param {THREE.Camera} camera
- * @param {string} hdrPath - e.g. '/skybox/background1.hdr'
- * @param {number} sphereRadius - radius of the inside sphere (default 50)
+ * @param {THREE.Scene}          scene
+ * @param {THREE.Camera}         camera
+ * @param {string}               hdrPath       e.g. '/skybox/background1.hdr'
+ * @param {number}               sphereRadius  radius of the inside sphere (default 50)
  */
 export function loadHDRSkybox(renderer, scene, camera, hdrPath, sphereRadius = 50) {
-  if (!(renderer instanceof THREE.WebGLRenderer) || !(scene instanceof THREE.Scene) || !(camera instanceof THREE.Camera)) {
+  if (!(renderer instanceof THREE.WebGLRenderer)
+   || !(scene    instanceof THREE.Scene)
+   || !(camera   instanceof THREE.Camera)) {
     console.warn('SkyboxLoader: invalid renderer/scene/camera');
     return;
   }
@@ -24,25 +25,32 @@ export function loadHDRSkybox(renderer, scene, camera, hdrPath, sphereRadius = 5
   pmrem.compileEquirectangularShader();
 
   new RGBELoader()
-    .setDataType(THREE.UnsignedByteType) // keeps full res for visuals
-    .load(hdrPath, (hdrTexture) => {
-      // 1️⃣ Lighting (PMREM)
-      const envMap = pmrem.fromEquirectangular(hdrTexture).texture;
-      scene.environment = envMap;
+    // Remove UnsignedByteType (1009). Use HalfFloatType or FloatType instead:
+    .setDataType(THREE.HalfFloatType)
+    .load(
+      hdrPath,
+      (hdrTexture) => {
+        // tell three this is an equirectangular environment
+        hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
 
-      // 2️⃣ Visual sphere (full res)
-      const sphereGeo = new THREE.SphereGeometry(sphereRadius, 128, 128);
-      sphereGeo.scale(-1, 1, 1); // invert so we see inside
-      const sphereMat = new THREE.MeshBasicMaterial({ map: hdrTexture });
-      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+        // 1) PBR lighting
+        const envMap = pmrem.fromEquirectangular(hdrTexture).texture;
+        scene.environment = envMap;
 
-      // Attach to camera so it moves with view
-      camera.add(sphere);
-      scene.add(camera);
+        // 2) Visual sphere
+        const sphereGeo = new THREE.SphereGeometry(sphereRadius, 128, 128);
+        sphereGeo.scale(-1, 1, 1); // invert so we see inside
+        const sphereMat = new THREE.MeshBasicMaterial({ map: hdrTexture });
+        const sphere    = new THREE.Mesh(sphereGeo, sphereMat);
 
-      pmrem.dispose();
-    }, undefined, (err) => {
-      console.error('SkyboxLoader: failed to load HDR', err);
-    });
+        camera.add(sphere);
+        scene.add(camera);
+
+        pmrem.dispose();
+      },
+      undefined,
+      (err) => {
+        console.error('SkyboxLoader: failed to load HDR', err);
+      }
+    );
 }
-
