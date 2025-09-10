@@ -419,9 +419,8 @@ initUI();
 
 /* === Ambient state === */
 let chestBaseY = 0;
-let nextBlink = 0;                      // still set in initAvatar
-let blinkTimer = 2 + Math.random() * 3;
-let gazeTimer = 2 + Math.random() * 2;
+let blinkTimer  = 2 + Math.random() * 3;
+let gazeTimer   = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
 /* === Ambient behaviours === */
@@ -430,9 +429,7 @@ function handleBlink(delta) {
   if (blinkTimer <= 0) {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
     mgr.setValue('Blink', 1.0);
-    setTimeout(() => {
-      mgr.setValue('Blink', 0.0);
-    }, 150);
+    setTimeout(() => mgr.setValue('Blink', 0.0), 150);
     blinkTimer = 2 + Math.random() * 3;
   }
 }
@@ -440,21 +437,47 @@ function handleBlink(delta) {
 function handleGaze(delta) {
   gazeTimer -= delta;
   if (gazeTimer <= 0) {
-    gazeDirection = (Math.random() - 0.5) * 0.2;  // small head turn
+    gazeDirection = (Math.random() - 0.5) * 0.2;
     gazeTimer = 2 + Math.random() * 2;
   }
   const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
-  if (head) {
-    head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
-  }
+  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
 }
 
 function handleBreath(t) {
   const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
-  if (chest) {
-    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
-  }
+  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
 }
+
+/* === Load VRM and Blendfaces === */
+function initAvatar(vrm) {
+  const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
+  if (chest) chestBaseY = chest.position.y;
+
+  // Re-initialize ambient timers now that VRM is loaded
+  blinkTimer = 2 + Math.random() * 3;
+  gazeTimer  = 2 + Math.random() * 2;
+  gazeDirection = 0;
+}
+
+loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
+  currentVRM = vrm;
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI;
+
+  controls.target.set(0, 1.6, 0);
+  controls.update();
+
+  initAvatar(vrm); // ← timers and chestBaseY set
+
+  blendfaces = new BlendfacesController(vrm, {
+    expressionMap,
+    smooth: 0.3,
+    decay: 1.5,
+    rest: { blink: 0.0, neutral: 1.0 }
+  });
+  blendfaces.attachWS(cb => blendfacesWSHandler = cb);
+});
 
 /* === Animation loop === */
 function animate() {
@@ -466,26 +489,22 @@ function animate() {
   if (currentVRM) {
     currentVRM.update(dt);
 
-    // Default Joy if no active expression
+    // Default Joy if no queued expression
     if (Object.keys(activeExpr).length === 0) {
       const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
       mgr.setValue('Joy', 1.0);
       mgr.setValue('Neutral', 0.0);
     }
 
-    // Idle sway (spine)
+    // Spine sway
     const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
-    if (spine) {
-      spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-    }
+    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
 
-    // 1) Apply any queued blendshape expressions / visemes
+    // 1) Apply queued blendshape expressions / visemes
     applyExpressions(dt);
-    if (shouldUseBlendfaces()) {
-      blendfaces.update(dt);
-    }
+    if (shouldUseBlendfaces()) blendfaces.update(dt);
 
-    // 2) Run ambient breathing, gaze, then blink
+    // 2) Ambient: breath -> gaze -> blink
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
@@ -495,7 +514,7 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// Start the loop
+// Kick off the loop
 animate();
 
 /* === Resize === */
