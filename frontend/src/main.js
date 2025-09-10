@@ -193,25 +193,43 @@ async function sendToAgent() {
   const inputEl = document.getElementById('agentInput');
   const msg = inputEl.value.trim();
   if (!msg) return;
+
+  // Show the user’s message in the chat log
   addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
-    const chatRes = await fetch(`${backendBase}/api/chat`, {
+    // Send the user’s message directly to /api/tts
+    const ttsRes = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: msg })
     });
-    if (!chatRes.ok) throw new Error(`Chat failed ${chatRes.status}`);
-    const chatJson = await chatRes.json();
-    const reply = chatJson.text || '[No response]';
-    addChatEntry('agent', reply);
-    await speak(reply);
-} catch (err) {
-    console.error('[Agent Error]', err);
+    if (!ttsRes.ok) throw new Error(`TTS failed ${ttsRes.status}`);
+
+    const ttsJson = await ttsRes.json();
+
+    // Show GPT's reply from the TTS endpoint
+    addChatEntry('agent', ttsJson.text || '[No response]');
+
+    // Play the audio
+    if (ttsJson.audioUrl) {
+      const audio = new Audio(ttsJson.audioUrl);
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+    }
+
+    // If you want to manually trigger visemes/expression from the HTTP response
+    // (in addition to the WebSocket broadcast), you could do it here:
+    // blendfacesWSHandler({ type: 'blendshapes', ...ttsJson });
+
+  } catch (err) {
+    console.error('[Agent/TTS Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
 }
+
+
 
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
