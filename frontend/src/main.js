@@ -418,9 +418,9 @@ function initUI() {
 initUI();
 
 /* === Ambient state === */
-let chestBaseY = 0;
-let blinkTimer  = 2 + Math.random() * 3;
-let gazeTimer   = 2 + Math.random() * 2;
+let chestBaseY    = 0;
+let blinkTimer    = 2 + Math.random() * 3;
+let gazeTimer     = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
 /* === Ambient behaviours === */
@@ -449,18 +449,18 @@ function handleBreath(t) {
   if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
 }
 
-/* === Load VRM and Blendfaces === */
+/* === Load VRM and initialize ambient === */
 function initAvatar(vrm) {
   const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
   if (chest) chestBaseY = chest.position.y;
 
-  // Re-initialize ambient timers now that VRM is loaded
-  blinkTimer = 2 + Math.random() * 3;
-  gazeTimer  = 2 + Math.random() * 2;
+  // Reset countdown timers now that VRM is ready
+  blinkTimer    = 2 + Math.random() * 3;
+  gazeTimer     = 2 + Math.random() * 2;
   gazeDirection = 0;
 }
 
-loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
+loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
@@ -468,7 +468,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   controls.target.set(0, 1.6, 0);
   controls.update();
 
-  initAvatar(vrm); // ← timers and chestBaseY set
+  initAvatar(vrm);
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
@@ -500,11 +500,11 @@ function animate() {
     const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
     if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
 
-    // 1) Apply queued blendshape expressions / visemes
+    // 1) Expressions / visemes
     applyExpressions(dt);
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
-    // 2) Ambient: breath -> gaze -> blink
+    // 2) Ambient: breathe → gaze → blink
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
@@ -514,7 +514,7 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// Kick off the loop
+// Start the loop
 animate();
 
 /* === Resize === */
