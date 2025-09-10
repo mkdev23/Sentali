@@ -57,6 +57,11 @@ let currentVRM, blendfaces, blendfacesWSHandler;
 const clock = new THREE.Clock();
 
 /* === Load Skybox (rotated to screens, unlit, high quality) === */
+const options = {
+  desiredRadius: camera.far * 0.9,
+  setSceneBackground: true
+};
+
 (async () => {
   try {
     const sb = await loadGLBSkybox(
