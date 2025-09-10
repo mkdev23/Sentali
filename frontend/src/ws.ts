@@ -17,13 +17,20 @@ export class WSClient {
   private timer?: number;
   private maxRetries = 10;
 
-  constructor(opts: WSOpts = {}) {
-    this.url = opts.url ?? 'ws://0.0.0.1:8124';
-    this.protocols = opts.protocols;
-    this.onMessage = opts.onMessage;
-    this.onOpen = opts.onOpen;
-    this.onClose = opts.onClose;
-  }
+constructor(opts: WSOpts = {}) {
+  // Build a default URL based on the current page location
+  const defaultUrl =
+    window.location.protocol === 'https:'
+      ? `wss://${window.location.host}/ws`
+      : `ws://${window.location.host}/ws`;
+
+  this.url = opts.url ?? defaultUrl;
+  this.protocols = opts.protocols;
+  this.onMessage = opts.onMessage;
+  this.onOpen = opts.onOpen;
+  this.onClose = opts.onClose;
+}
+
 
   connect() {
     try {
