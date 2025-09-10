@@ -331,52 +331,87 @@ let chestBaseY = 0;
 let hasActiveExpression = false;
 let nextBlink = 0;
 
+// Ambient behaviour timers
+let blinkTimer = 2 + Math.random() * 3;
+let gazeTimer = 2 + Math.random() * 2;
+let gazeDirection = 0;
+
 function initAvatar(vrm) {
   const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
   if (chest) chestBaseY = chest.position.y;
   nextBlink = clock.getElapsedTime() + 3 + Math.random() * 2;
 }
 
-// Blink updater
-function updateBlink() {
-  if (!currentVRM) return;
-  const now = clock.getElapsedTime();
-  if (now > nextBlink) {
+// Ambient behaviour functions
+function handleBlink(delta) {
+  blinkTimer -= delta;
+  if (blinkTimer <= 0) {
     currentVRM.expressionManager.setValue('Blink', 1.0);
     setTimeout(() => currentVRM.expressionManager.setValue('Blink', 0.0), 150);
-    nextBlink = now + 3 + Math.random() * 2;
+    blinkTimer = 2 + Math.random() * 3;
   }
+}
+
+function handleGaze(delta) {
+  gazeTimer -= delta;
+  if (gazeTimer <= 0) {
+    gazeDirection = (Math.random() - 0.5) * 0.2; // small head turn
+    gazeTimer = 2 + Math.random() * 2;
+  }
+  const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+}
+
+function handleBreath() {
+  const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
+  if (chest) chest.position.y = chestBaseY + Math.sin(clock.elapsedTime * 0.5) * 0.002;
 }
 
 // === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta();
-  const t  = clock.getElapsedTime();
+
+  const dt = clock.getDelta();           // delta time for VRM update
+  const t  = clock.getElapsedTime();     // elapsed time for idle motions
 
   if (currentVRM) {
-    currentVRM.update(dt);           // prevents T‑pose
-    applyExpressions(dt);
+    // ✅ Advance VRM's internal animation system (prevents T‑pose)
+    currentVRM.update(dt);
+
+    // Default Joy if no active expression
+    if (!hasActiveExpression) {
+      currentVRM.expressionManager.setValue('Joy', 1.0);
+      currentVRM.expressionManager.setValue('Neutral', 0.0);
+    }
+
+    // Idle sway (spine)
+    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
+    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+
+    // Breathing (chest)
+    const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
+    if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+
+    // Head/gaze idle motion
+    const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+    if (head) {
+      head.rotation.y = Math.sin(t * 0.3) * 0.05;
+      head.rotation.x = Math.sin(t * 0.5) * 0.02;
+    }
 
     // Ambient behaviours
     handleBlink(dt);
     handleGaze(dt);
     handleBreath();
 
-    // Optional: your idle sway/breathing/head motion code
-    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
-    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+    // Apply any queued expressions
+    applyExpressions(dt);
 
-    const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
-    if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
-
-    const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
-    if (head) {
-      head.rotation.y = Math.sin(t * 0.3) * 0.05;
-      head.rotation.x = Math.sin(t * 0.5) * 0.02;
+    // Update Blendfaces if enabled
+    if (shouldUseBlendfaces()) {
+      blendfaces.update(dt);
     }
   }
-
 
   controls.update();
   renderer.render(scene, camera);
