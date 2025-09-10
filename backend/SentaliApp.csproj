@@ -29,13 +29,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Copy VRM from frontend/public into wwwroot/Assets so it's served in Azure -->
+    <!-- Copy VRM from frontend/public into wwwroot/Assets -->
     <Content Include="..\frontend\public\Assets\Sentali2.vrm">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>wwwroot\Assets\Sentali2.vrm</Link>
     </Content>
 
-    <!-- Keep your backend Assets folder -->
+    <!-- Keep backend Assets folder -->
     <None Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
 
     <!-- Remove unwanted controllers from compilation -->
