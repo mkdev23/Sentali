@@ -8,19 +8,21 @@ import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
 const blendfacesToggle = document.getElementById('blendfacesToggle');
-const backendBase = '';
+
+// Set to your deployed Azure App Service base URL
+const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
 /* === Scene setup === */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200); // FOV narrowed to 25
-camera.position.set(0, 1.6, 4.5); // pulled back for sharper background
+const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 1.6, 4.5);
 camera.updateProjectionMatrix();
 
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
   canvas: document.getElementById('c')
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // crisp without overkill
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -28,7 +30,7 @@ renderer.toneMappingExposure = 1.0;
 
 /* === OrbitControls === */
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.6, 0); // head height
+controls.target.set(0, 1.6, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 1.0;
@@ -56,24 +58,15 @@ scene.add(skyGroup);
 let currentVRM, blendfaces, blendfacesWSHandler;
 const clock = new THREE.Clock();
 
-/* === Load Skybox (rotated to screens, unlit, high quality) === */
-const options = {
-  desiredRadius: camera.far * 0.9,
-  setSceneBackground: true
-};
-
+/* === Load Skybox === */
 (async () => {
   try {
     const sb = await loadGLBSkybox(
- 'https://sentali-cdn.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D',
-  scene,
-  camera,
-  options
-
-, {
-      desiredRadius: camera.far * 0.9,
-      setSceneBackground: true
-    });
+      'https://sentali-cdn.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D',
+      scene,
+      camera,
+      { desiredRadius: camera.far * 0.9, setSceneBackground: true }
+    );
     if (sb) {
       const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
       sb.traverse(child => {
@@ -96,7 +89,7 @@ const options = {
           });
         }
       });
-      sb.rotation.y = Math.PI; // screens facing camera
+      sb.rotation.y = Math.PI;
       sb.scale.setScalar(camera.far * 0.9);
       skyGroup.add(sb);
     }
@@ -109,7 +102,7 @@ const options = {
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   currentVRM = vrm;
   vrmGroup.add(vrm.scene);
-  vrm.scene.rotation.y = Math.PI; // face camera
+  vrm.scene.rotation.y = Math.PI;
 
   controls.target.set(0, 1.6, 0);
   controls.update();
@@ -182,11 +175,15 @@ async function speak(text) {
       body: JSON.stringify({ text })
     });
     if (!res.ok) throw new Error(`TTS failed ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.crossOrigin = 'anonymous';
-    await audio.play();
+
+    const data = await res.json();
+    if (data.audioUrl) {
+      const audio = new Audio(data.audioUrl);
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+    } else {
+      console.warn('No audioUrl in TTS response', data);
+    }
   } catch (err) {
     console.error('[TTS Error]', err);
   }
@@ -210,7 +207,7 @@ async function sendToAgent() {
     const reply = chatJson.text || '[No response]';
     addChatEntry('agent', reply);
     await speak(reply);
-  } catch (err) {
+} catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
