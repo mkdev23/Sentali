@@ -197,11 +197,13 @@ function handleBlink(delta) {
     if (shouldUseBlendfaces()) {
       blendfaces.set('blink', 1.0, 'live', 150);
     } else {
-      mgr.setValue('Blink', 1.0);
+      mgr.setValue('blink', 1.0);
       mgr.update();
+      console.log('[Blink] Set to 1.0, value now:', mgr.getValue('blink'));
       setTimeout(() => {
-        mgr.setValue('Blink', 0.0);
+        mgr.setValue('blink', 0.0);
         mgr.update();
+        console.log('[Blink] Set to 0.0, value now:', mgr.getValue('blink'));
       }, 150);
     }
     blinkTimer = 2 + Math.random() * 3;
@@ -215,27 +217,32 @@ function handleGaze(delta) {
     gazeDirection = (Math.random() - 0.5) * 0.2;
     gazeTimer = 2 + Math.random() * 2;
   }
-  const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+  const head = currentVRM.humanoid.getNormalizedBoneNode('head');
   if (head) {
     head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
   } else {
-    console.warn('[Ambient] No Head bone found');
+    console.warn('[Ambient] No head bone found');
   }
 }
 
 function handleBreath(t) {
   console.log('[Ambient] Handling breath');
-  const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
+  let chest = currentVRM.humanoid.getNormalizedBoneNode('chest');
+  if (!chest) {
+    chest = currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
+    if (chest) console.log('[Breath] Fell back to upper_chest');
+  }
   if (chest) {
     chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
   } else {
-    console.warn('[Ambient] No Chest bone found');
+    console.warn('[Ambient] No chest/upper_chest bone found');
   }
 }
 
 /* Load VRM + initialize ambient timers */
 function initAvatar(vrm) {
-  const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
+  let chest = vrm.humanoid.getNormalizedBoneNode('chest');
+  if (!chest) chest = vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
   blinkTimer = 2 + Math.random() * 3;
   gazeTimer = 2 + Math.random() * 2;
@@ -260,6 +267,9 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
   console.log('[VRM] Loaded successfully');
+  console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
+  const mgr = vrm.expressionManager || vrm.blendShapeProxy;
+  if (mgr) console.log('[VRM] Expressions:', mgr.getExpressionNames());
 });
 
 /* Viseme ID map from backend */
@@ -319,6 +329,7 @@ async function speakAndType(text, agentDiv) {
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
     audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
+    audio.addEventListener('canplaythrough', () => console.log('[TTS] Ready to play'), { once: true });
 
     const metadataPromise = new Promise((resolve, reject) => {
       audio.addEventListener('loadedmetadata', resolve, { once: true });
@@ -482,16 +493,16 @@ function animate() {
     // default neutral "Joy" expression
     if (Object.keys(activeExpr).length === 0 && !shouldUseBlendfaces()) {
       const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-      mgr.setValue('Joy', 1.0);
-      mgr.setValue('Neutral', 0.0);
+      mgr.setValue('happy', 1.0); // Updated to match model (was 'Joy')
+      mgr.setValue('neutral', 0.0);
     }
 
     // spine sway
-    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
+    const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
     if (spine) {
       spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
     } else {
-      console.warn('[Ambient] No Spine bone found');
+      console.warn('[Ambient] No spine bone found');
     }
 
     // 1) expressions/visemes

@@ -1,25 +1,32 @@
+// vrmMapping.ts
 import { VRMExpressionPresetName } from '@pixiv/three-vrm';
 
 // vrmMapping.ts
 // Centralised mapping for WS → VRM shapekey names from your Blender export
 
 export const expressionMap = {
-  // Emotions
-  joy: 'BlendShape.joy',
-  angry: 'BlendShape.angry',
-  sorrow: 'BlendShape.sorrow',
-  neutral: 'BlendShape.Neutral',
-  fun: 'BlendShape.fun',
+  // Emotions (map presets to your model's exact names)
+  joy: 'happy',
+  angry: 'angry',
+  sorrow: 'sad',
+  neutral: 'neutral',
+  fun: 'relaxed', // Or 'surprised' if better fit
 
   // Visemes (Azure phoneme → VRM shapekey)
-  aa: 'BlendShape.A', // mouth open (A)
-  ee: 'BlendShape.E', // E
-  ih: 'BlendShape.I', // I
-  oh: 'BlendShape.O', // O
-  ou: 'BlendShape.U', // U
+  aa: 'aa',
+  ee: 'ee',
+  ih: 'ih',
+  oh: 'oh',
+  ou: 'ou',
 
   // Blinks
-  blink: 'BlendShape.blink',
-  blinkleft: 'BlendShape.blink_l',
-  blinkright: 'BlendShape.blink_R'
+  blink: 'blink',
+  blinkleft: 'blinkLeft',
+  blinkright: 'blinkRight',
+
+  // Optional: Look directions (if expanding gaze to blends)
+  lookdown: 'lookDown',
+  lookleft: 'lookLeft',
+  lookright: 'lookRight',
+  lookup: 'lookUp'
 };
