@@ -239,6 +239,74 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
 });
 
+/* === Prevent overlapping TTS calls === */
+let ttsInflight = false;
+
+async function speakAndType(text, agentDiv) {
+  if (ttsInflight) {
+    console.warn('[TTS] Request in-flight; skipping new request');
+    updateChatEntry(agentDiv, 'agent', text);
+    return;
+  }
+  ttsInflight = true;
+  try {
+    const clean = sanitizeForTTS(text);
+    const res = await fetch(`${backendBase}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean })
+    });
+
+    if (!res.ok) {
+      console.error(`[TTS Error] HTTP ${res.status}`);
+      updateChatEntry(agentDiv, 'agent', text);
+      return;
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      console.error('[TTS Error] Expected JSON but got', contentType);
+      updateChatEntry(agentDiv, 'agent', text);
+      return;
+    }
+
+    const body = await res.json().catch(err => {
+      console.error('[TTS Error] Failed to parse JSON:', err);
+      return null;
+    });
+    if (!body?.audioUrl) {
+      console.warn('[TTS] No audioUrl in response', body);
+      updateChatEntry(agentDiv, 'agent', text);
+      return;
+    }
+
+    const audio = new Audio(body.audioUrl);
+    audio.crossOrigin = 'anonymous';
+
+    await new Promise(resolve => {
+      const done = () => resolve();
+      audio.addEventListener('loadedmetadata', done, { once: true });
+      audio.addEventListener('error', done, { once: true });
+    });
+
+    const duration =
+      Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration * 1000
+        : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
+
+    audio.addEventListener('play', () => {
+      typeOut(agentDiv, 'agent', text, duration);
+    }, { once: true });
+
+    audio.play().catch(err => {
+      console.warn('[TTS] Audio play failed:', err);
+      updateChatEntry(agentDiv, 'agent', text);
+    });
+  } finally {
+    ttsInflight = false;
+  }
+}
+
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
@@ -409,33 +477,41 @@ initUI();
 
 /* === Ambient state === */
 let chestBaseY = 0;
-let nextBlink = 0;
+let nextBlink = 0;                      // still set in initAvatar
 let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
-/* Ambient behaviours */
+/* === Ambient behaviours === */
 function handleBlink(delta) {
   blinkTimer -= delta;
   if (blinkTimer <= 0) {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-    mgr?.setValue('Blink', 1.0);
-    setTimeout(() => mgr?.setValue('Blink', 0.0), 150);
+    mgr.setValue('Blink', 1.0);
+    setTimeout(() => {
+      mgr.setValue('Blink', 0.0);
+    }, 150);
     blinkTimer = 2 + Math.random() * 3;
   }
 }
+
 function handleGaze(delta) {
   gazeTimer -= delta;
   if (gazeTimer <= 0) {
-    gazeDirection = (Math.random() - 0.5) * 0.2; // small head turn
+    gazeDirection = (Math.random() - 0.5) * 0.2;  // small head turn
     gazeTimer = 2 + Math.random() * 2;
   }
-  const head = currentVRM?.humanoid?.getNormalizedBoneNode?.('Head');
-  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+  const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+  if (head) {
+    head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+  }
 }
+
 function handleBreath(t) {
-  const chest = currentVRM?.humanoid?.getNormalizedBoneNode?.('Chest');
-  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+  const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
+  if (chest) {
+    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+  }
 }
 
 /* === Animation loop === */
@@ -455,23 +531,29 @@ function animate() {
       mgr.setValue('Neutral', 0.0);
     }
 
-    // Spine sway
-    const spine = currentVRM?.humanoid?.getNormalizedBoneNode?.('Spine');
-    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+    // Idle sway (spine)
+    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
+    if (spine) {
+      spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+    }
 
-    // Ambient behaviours
-    handleBlink(dt);
-    handleGaze(dt);
-    handleBreath(t);
-
-    // Expressions and Blendfaces
+    // 1) Apply any queued blendshape expressions / visemes
     applyExpressions(dt);
-    if (shouldUseBlendfaces()) blendfaces.update(dt);
+    if (shouldUseBlendfaces()) {
+      blendfaces.update(dt);
+    }
+
+    // 2) Run ambient breathing, gaze, then blink
+    handleBreath(t);
+    handleGaze(dt);
+    handleBlink(dt);
   }
 
   controls.update();
   renderer.render(scene, camera);
 }
+
+// Start the loop
 animate();
 
 /* === Resize === */
@@ -480,6 +562,3 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
-/* === Start animation loop === */
-animate();
