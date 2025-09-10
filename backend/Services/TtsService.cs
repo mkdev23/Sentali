@@ -41,7 +41,8 @@ namespace SentaliApp.Services
                     endpointUri.Host);
             }
 
-            _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+            // ✅ Set Sonia as the default voice
+            _speechConfig.SpeechSynthesisVoiceName = "en-GB-SoniaNeural";
             _speechConfig.SetSpeechSynthesisOutputFormat(
                 SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
         }
@@ -64,7 +65,18 @@ namespace SentaliApp.Services
                 visemes.Add(e);
             };
 
-            var result = await synthesizer.SpeakTextAsync(text);
+            // ✅ Build SSML for conversational style
+            string ssml = $@"
+<speak version='1.0' xml:lang='en-GB'>
+  <voice name='en-GB-SoniaNeural'>
+    <mstts:express-as style='chat' styledegree='2'>
+      {System.Security.SecurityElement.Escape(text)}
+    </mstts:express-as>
+  </voice>
+</speak>";
+
+            // ✅ Use SpeakSsmlAsync instead of SpeakTextAsync
+            var result = await synthesizer.SpeakSsmlAsync(ssml);
             if (result.Reason != ResultReason.SynthesizingAudioCompleted)
                 throw new Exception($"TTS failed: {result.Reason}");
 
