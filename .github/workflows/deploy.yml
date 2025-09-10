@@ -12,23 +12,24 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
+    # 1. Checkout repo
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Build frontend
+    # 2. Build frontend
     - name: Build frontend
       run: |
         cd frontend
         npm ci
         npm run build
 
-    # Setup .NET
+    # 3. Setup .NET
     - name: Setup .NET 9
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
 
-    # Login to Azure
+    # 4. Login to Azure with OIDC
     - name: Login to Azure with OIDC
       uses: azure/login@v2
       with:
@@ -36,21 +37,19 @@ jobs:
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    # Publish backend
+    # 5. Publish backend
     - name: Publish .NET app
       run: dotnet publish backend/SentaliApp.csproj -c Release -o ./publish
 
-    # Copy frontend into publish output
+    # 6. Merge frontend into publish output (preserve backend assets)
     - name: Copy frontend to publish output
       run: |
         mkdir -p ./publish/wwwroot
-        cp -r frontend/dist/* ./publish/wwwroot/
+        rsync -a frontend/dist/ ./publish/wwwroot/
 
-    # Deploy to Azure
+    # 7. Deploy to Azure
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v3
       with:
         app-name: sentali-app-6926
         package: ./publish
-
-
