@@ -168,14 +168,18 @@ app.MapPost("/api/tts", async (
     SentimentService sentiment,
     TtsService tts,
     BlobStorageService blob,
-    [FromBody] string userInput,
+    [FromBody] ChatRequest req,   // ✅ now binds { "text": "..." }
     ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("TtsEndpoint");
+
+    if (req is null || string.IsNullOrWhiteSpace(req.Text))
+        return Results.BadRequest("Missing 'text' in request body.");
+
     try
     {
         // 1) GPT reply
-        var reply = await gpt.GetResponse(userInput);
+        var reply = await gpt.GetResponse(req.Text);
 
         // 2) Sentiment → expression
         var sent       = await sentiment.GetSentiment(reply);
