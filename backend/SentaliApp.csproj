@@ -26,15 +26,17 @@
     <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.5" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="System.Windows.Extensions" Version="9.0.8" />
+  </ItemGroup>
 
-    <!-- Keep the VRM asset -->
-    <None Include="..\frontend\public\Assets\Sentali2.vrm">
+  <ItemGroup>
+    <!-- Copy VRM from frontend/public into wwwroot/Assets so it's served in Azure -->
+    <Content Include="..\frontend\public\Assets\Sentali2.vrm">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+      <Link>wwwroot\Assets\Sentali2.vrm</Link>
+    </Content>
 
-    <!-- Keep your Assets folder, but exclude wwwroot to avoid duplicate Content -->
+    <!-- Keep your backend Assets folder -->
     <None Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Remove="wwwroot\Assets\**\*.*" />
 
     <!-- Remove unwanted controllers from compilation -->
     <Compile Remove="Controllers\WebhookHandler.cs" />

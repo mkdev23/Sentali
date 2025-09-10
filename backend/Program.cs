@@ -83,7 +83,7 @@ if (app.Environment.IsDevelopment())
 // 9) Static file MIME mapping
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".mp3"] = "audio/mpeg";
-provider.Mappings[".vrm"] = "application/octet-stream";
+provider.Mappings[".vrm"] = "model/gltf-binary";
 provider.Mappings[".hdr"] = "image/vnd.radiance";
 
 // 10) Serve wwwroot
