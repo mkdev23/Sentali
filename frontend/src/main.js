@@ -206,47 +206,35 @@ function sanitizeForTTS(s) {
 */
 
 async function speak(text) {
-  const cleaned = sanitizeForTTS(text);
-  if (!cleaned) {
-    console.warn('[TTS] Skipping empty/unspeakable text');
-    return;
-  }
-
   try {
     const res = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: cleaned })
+      body: JSON.stringify({ text })
     });
 
-    // Always read the body so we can see the backend error message
-    const contentType = res.headers.get('content-type') || '';
-    const body = contentType.includes('application/json') ? await res.json().catch(() => null)
-                                                          : await res.text().catch(() => '');
-
     if (!res.ok) {
-      console.error('[TTS Error]', res.status, body || '(no body)');
-      throw new Error(`TTS failed ${res.status}`);
+      console.error(`[TTS Error] HTTP ${res.status}`);
+      return;
     }
 
+    // ✅ Parse JSON, not blob
+    const body = await res.json();
+
     if (body && body.audioUrl) {
+      console.log('[TTS] Playing audio from', body.audioUrl);
       const audio = new Audio(body.audioUrl);
       audio.crossOrigin = 'anonymous';
-      await audio.play();
-      // HTTP viseme fallback if WS missed it
-      if (Array.isArray(body.visemes) && blendfacesWSHandler) {
-        const values = {};
-        for (const v of body.visemes) values[`viseme_${v.VisemeId}`] = 1;
-        blendfacesWSHandler({ type: 'blendshapes', values });
-      }
+      await audio.play().catch(err => {
+        console.warn('[TTS] Audio play failed:', err);
+      });
     } else {
-      console.warn('No audioUrl in TTS response', body);
+      console.warn('[TTS] No audioUrl in response', body);
     }
   } catch (err) {
     console.error('[TTS Error]', err);
   }
 }
-
 async function sendToAgent() {
   const inputEl = document.getElementById('agentInput');
   const msg = inputEl.value.trim();
@@ -363,46 +351,32 @@ function updateBlink() {
 // === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
-
-  const dt = clock.getDelta();           // delta time for VRM update
-  const t  = clock.getElapsedTime();     // elapsed time for idle motions
+  const dt = clock.getDelta();
+  const t  = clock.getElapsedTime();
 
   if (currentVRM) {
-    // ✅ Advance VRM's internal animation system (prevents T‑pose)
-    currentVRM.update(dt);
+    currentVRM.update(dt);           // prevents T‑pose
+    applyExpressions(dt);
 
-    // Default Joy if no active expression
-    if (!hasActiveExpression) {
-      currentVRM.expressionManager.setValue('Joy', 1.0);
-      currentVRM.expressionManager.setValue('Neutral', 0.0);
-    }
+    // Ambient behaviours
+    handleBlink(dt);
+    handleGaze(dt);
+    handleBreath();
 
-    // Idle sway (spine)
+    // Optional: your idle sway/breathing/head motion code
     const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
     if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
 
-    // Breathing (chest)
     const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
     if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
 
-    // Head/gaze idle motion
     const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
     if (head) {
       head.rotation.y = Math.sin(t * 0.3) * 0.05;
       head.rotation.x = Math.sin(t * 0.5) * 0.02;
     }
-
-    // Blinking
-    updateBlink();
-
-    // Apply any queued expressions
-    applyExpressions(dt);
-
-    // Update Blendfaces if enabled
-    if (shouldUseBlendfaces()) {
-      blendfaces.update(dt);
-    }
   }
+
 
   controls.update();
   renderer.render(scene, camera);

@@ -38,67 +38,84 @@ namespace SentaliApp.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] ChatRequest req)
         {
-            if (req == null || string.IsNullOrEmpty(req.Text))
-               return BadRequest(new { error = "Missing 'text' property" });
+            if (req == null || string.IsNullOrWhiteSpace(req.Text))
+                return BadRequest(new { error = "Missing 'text' property" });
 
             _logger.LogInformation("[TTS] Speaking provided text: {Text}", req.Text);
 
-            // 1) Sentiment → expression
-            var sentiment = await _sentiment.GetSentiment(req.Text);
-            var expression = sentiment switch
+            try
             {
-                "Positive" => "joy",
-                "Negative" => "angry",
-                _ => "neutral"
-            };
-            _logger.LogInformation(
-                "[TTS] Sentiment: {Sentiment}, Expression: {Expression}",
-                sentiment, expression);
-
-            // 2) Synthesize + collect visemes
-            (byte[] audioBytes, List<SpeechSynthesisVisemeEventArgs> visemes)
-                = await _tts.SynthesizeWithVisemesAsync(req.Text);
-
-            // 3) Upload audio → SAS URL
-            var audioUrl = await _blob.UploadAndGetSas(audioBytes);
-
-            // 4) Build viseme payload
-            var visemePayload = visemes
-                .Select(v => new VisemePayload
+                // 1) Sentiment → expression
+                var sentiment = await _sentiment.GetSentiment(req.Text);
+                var expression = sentiment switch
                 {
-                    VisemeId = (uint)v.VisemeId,
-                    TimeMs = (ulong)(v.AudioOffset / 10_000)
-                })
-                .ToList();
+                    "Positive" => "joy",
+                    "Negative" => "angry",
+                    _ => "neutral"
+                };
+                _logger.LogInformation("[TTS] Sentiment: {Sentiment}, Expression: {Expression}", sentiment, expression);
 
-            // 5) Default to joy if no visemes emitted
-            if (visemePayload.Count == 0)
-            {
-                visemePayload.Add(new VisemePayload
+                // 2) Synthesize + collect visemes with timeout
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                _logger.LogInformation("[TTS] Starting synthesis...");
+                var (audioBytes, visemes) = await _tts.SynthesizeWithVisemesAsync(req.Text, cts.Token);
+                _logger.LogInformation("[TTS] Synthesis complete, {Length} bytes", audioBytes?.Length ?? 0);
+
+                if (audioBytes == null || audioBytes.Length == 0)
                 {
-                    VisemeId = 0U,
-                    TimeMs = 0UL
+                    _logger.LogWarning("[TTS] No audio returned from synthesis");
+                    return Problem("TTS produced no audio", statusCode: 500);
+                }
+
+                // 3) Upload audio → SAS URL
+                _logger.LogInformation("[TTS] Uploading to blob...");
+                var audioUrl = await _blob.UploadAndGetSas(audioBytes);
+                _logger.LogInformation("[TTS] Blob uploaded: {Url}", audioUrl);
+
+                // 4) Build viseme payload
+                var visemePayload = visemes
+                    .Select(v => new VisemePayload
+                    {
+                        VisemeId = (uint)v.VisemeId,
+                        TimeMs = (ulong)(v.AudioOffset / 10_000)
+                    })
+                    .ToList();
+
+                if (visemePayload.Count == 0)
+                {
+                    visemePayload.Add(new VisemePayload { VisemeId = 0U, TimeMs = 0UL });
+                    expression = "joy";
+                }
+
+                // 5) Broadcast to WS clients
+                _ws.Broadcast(new
+                {
+                    type = "blendshapes",
+                    audioUrl,
+                    expression,
+                    visemes = visemePayload
                 });
-                expression = "joy";
+                _logger.LogInformation("[TTS] Broadcast complete");
+
+                // 6) Return structured JSON
+                return Ok(new
+                {
+                    sentiment,
+                    expression,
+                    audioUrl,
+                    visemes = visemePayload
+                });
             }
-
-            // 6) Broadcast to WS clients
-            _ws.Broadcast(new
+            catch (OperationCanceledException)
             {
-                type = "blendshapes",
-                audioUrl,
-                expression,
-                visemes = visemePayload
-            });
-
-            // 7) Return structured JSON
-            return Ok(new
+                _logger.LogError("[TTS] Synthesis timed out");
+                return Problem("TTS synthesis timed out", statusCode: 504);
+            }
+            catch (Exception ex)
             {
-                sentiment,
-                expression,
-                audioUrl,
-                visemes = visemePayload
-            });
+                _logger.LogError(ex, "[TTS] Pipeline failed");
+                return Problem("TTS pipeline failed", ex.Message, 500);
+            }
         }
     }
 }

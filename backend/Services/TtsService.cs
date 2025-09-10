@@ -45,49 +45,50 @@ namespace SentaliApp.Services
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
         }
 
-        public async Task<(byte[] Audio, List<SpeechSynthesisVisemeEventArgs> Visemes)>
-            SynthesizeWithVisemesAsync(string text)
+public async Task<(byte[] Audio, List<SpeechSynthesisVisemeEventArgs> Visemes)>
+    SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
+{
+    var visemes = new List<SpeechSynthesisVisemeEventArgs>();
+
+    using var audioStream = AudioOutputStream.CreatePullStream();
+    using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
+    using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
+
+    synthesizer.VisemeReceived += (_, e) => visemes.Add(e);
+
+    // Pass cancellation token into the async call
+    var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
+
+    if (result.Reason != ResultReason.SynthesizingAudioCompleted)
+    {
+        if (result.Reason == ResultReason.Canceled)
         {
-            var visemes = new List<SpeechSynthesisVisemeEventArgs>();
+            var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
+            Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
+            Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
 
-            using var audioStream = AudioOutputStream.CreatePullStream();
-            using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
-            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
-
-            synthesizer.VisemeReceived += (_, e) => visemes.Add(e);
-
-            var result = await synthesizer.SpeakTextAsync(text);
-
-            if (result.Reason != ResultReason.SynthesizingAudioCompleted)
+            if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
             {
-                if (result.Reason == ResultReason.Canceled)
-                {
-                    var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
-                    Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
-                    Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
-
-                    if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
-                    {
-                        Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
-                        _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-                        return await SynthesizeWithVisemesAsync(text);
-                    }
-
-                    throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
-                }
-
-                throw new Exception($"TTS failed: {result.Reason}");
+                Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
+                _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+                return await SynthesizeWithVisemesAsync(text, cancellationToken);
             }
 
-            await using var ms = new MemoryStream();
-            var buffer = new byte[32_000];
-            uint bytesRead;
-            while ((bytesRead = audioStream.Read(buffer)) > 0)
-            {
-                ms.Write(buffer, 0, (int)bytesRead);
-            }
+            throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
+        }
 
-            return (ms.ToArray(), visemes);
+        throw new Exception($"TTS failed: {result.Reason}");
+    }
+
+    await using var ms = new MemoryStream();
+    var buffer = new byte[32_000];
+    uint bytesRead;
+    while ((bytesRead = audioStream.Read(buffer)) > 0)
+    {
+        ms.Write(buffer, 0, (int)bytesRead);
+    }
+
+    return (ms.ToArray(), visemes);
         }
 
         public async Task<string> SynthesizeToFileAsync(string text, string tempPath, string finalPath, string baseUrl, WsHub? ws = null)
