@@ -15,7 +15,7 @@ namespace SentaliApp.Services
 
     public class GptService
     {
-        
+
         private readonly string _agentId;
         private readonly string _projectEndpoint;
         private readonly string? _projectApiKey;
@@ -31,12 +31,23 @@ namespace SentaliApp.Services
             _http = new HttpClient();
         }
 
+        private async Task<HttpResponseMessage> SendWithLogging(Func<Task<HttpResponseMessage>> send, string step)
+        {
+            var res = await send();
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync();
+                Console.Error.WriteLine($"[Assistants REST] {step} failed: {(int)res.StatusCode} {res.StatusCode} → {body}");
+                throw new HttpRequestException($"{step} failed: {(int)res.StatusCode} {res.StatusCode} → {body}");
+            }
+            return res;
+        }
+
         public async Task<string> GetResponse(string input)
         {
             Console.WriteLine($"[Assistants REST] Endpoint: {_projectEndpoint}");
             Console.WriteLine($"[Assistants REST] AssistantId: {_agentId}");
 
-            // 1) Auth: API key or MI with AI Foundry audience
             _http.DefaultRequestHeaders.Clear();
             if (!string.IsNullOrEmpty(_projectApiKey))
             {
@@ -55,35 +66,30 @@ namespace SentaliApp.Services
 
             // 2) Create a thread
             var threadUrl = $"{_projectEndpoint}/threads?api-version=2025-05-01";
-            var threadRes = await _http.PostAsync(
-                threadUrl,
-                new StringContent("{}", Encoding.UTF8, "application/json"));
-            threadRes.EnsureSuccessStatusCode();
+            var threadRes = await SendWithLogging(
+                () => _http.PostAsync(threadUrl, new StringContent("{}", Encoding.UTF8, "application/json")),
+                "CreateThread");
             var threadJson = await threadRes.Content.ReadAsStringAsync();
             Console.WriteLine($"[Assistants REST] CreateThread → {threadJson}");
-            var threadId = JsonDocument.Parse(threadJson)
-                .RootElement.GetProperty("id").GetString()!;
+            var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString()!;
 
             // 3) Post the user message
             var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version=2025-05-01";
             var msgPayload = JsonSerializer.Serialize(new { role = "user", content = input });
-            var msgRes = await _http.PostAsync(
-                msgUrl,
-                new StringContent(msgPayload, Encoding.UTF8, "application/json"));
-            msgRes.EnsureSuccessStatusCode();
+            var msgRes = await SendWithLogging(
+                () => _http.PostAsync(msgUrl, new StringContent(msgPayload, Encoding.UTF8, "application/json")),
+                "PostMessage");
             Console.WriteLine($"[Assistants REST] PostMessage → {await msgRes.Content.ReadAsStringAsync()}");
 
-            // 4) Create a run with your assistant
+            // 4) Create a run
             var runUrl = $"{_projectEndpoint}/threads/{threadId}/runs?api-version=2025-05-01";
             var runPayload = JsonSerializer.Serialize(new { assistant_id = _agentId });
-            var runRes = await _http.PostAsync(
-                runUrl,
-                new StringContent(runPayload, Encoding.UTF8, "application/json"));
-            runRes.EnsureSuccessStatusCode();
+            var runRes = await SendWithLogging(
+                () => _http.PostAsync(runUrl, new StringContent(runPayload, Encoding.UTF8, "application/json")),
+                "CreateRun");
             var runJson = await runRes.Content.ReadAsStringAsync();
             Console.WriteLine($"[Assistants REST] CreateRun → {runJson}");
-            var runId = JsonDocument.Parse(runJson)
-                .RootElement.GetProperty("id").GetString()!;
+            var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString()!;
 
             // 5) Poll until the run completes
             string status;
@@ -91,28 +97,22 @@ namespace SentaliApp.Services
             {
                 await Task.Delay(500);
                 var statusUrl = $"{_projectEndpoint}/threads/{threadId}/runs/{runId}?api-version=2025-05-01";
-                var statusRes = await _http.GetAsync(statusUrl);
-                statusRes.EnsureSuccessStatusCode();
+                var statusRes = await SendWithLogging(() => _http.GetAsync(statusUrl), "GetRunStatus");
                 var statusJson = await statusRes.Content.ReadAsStringAsync();
-                status = JsonDocument.Parse(statusJson)
-                    .RootElement.GetProperty("status").GetString()!;
+                status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString()!;
                 Console.WriteLine($"[Assistants REST] Run status: {status}");
                 if (status == "failed")
                 {
                     var err = JsonDocument.Parse(statusJson)
-                        .RootElement
-                        .GetProperty("last_error")
-                        .GetProperty("message")
-                        .GetString();
+                        .RootElement.GetProperty("last_error").GetProperty("message").GetString();
                     throw new Exception($"Assistant run failed: {err}");
                 }
             }
             while (status is "queued" or "in_progress");
 
-            // 6) Fetch all messages and return the assistant’s reply
+            // 6) Fetch all messages
             var messagesUrl = $"{_projectEndpoint}/threads/{threadId}/messages?order=asc&api-version=2025-05-01";
-            var messagesRes = await _http.GetAsync(messagesUrl);
-            messagesRes.EnsureSuccessStatusCode();
+            var messagesRes = await SendWithLogging(() => _http.GetAsync(messagesUrl), "GetMessages");
             var messagesJson = await messagesRes.Content.ReadAsStringAsync();
             Console.WriteLine($"[Assistants REST] Messages → {messagesJson}");
 
@@ -125,10 +125,7 @@ namespace SentaliApp.Services
                     {
                         if (part.GetProperty("type").GetString() == "text")
                         {
-                            return part
-                                .GetProperty("text")
-                                .GetProperty("value")
-                                .GetString() ?? "[No response text]";
+                            return part.GetProperty("text").GetProperty("value").GetString() ?? "[No response text]";
                         }
                     }
                 }
