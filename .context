@@ -1,0 +1,86 @@
+# Sentali Ecosystem Context
+
+## Component Roles
+
+| Component         | Role                                                                 |
+|-------------------|----------------------------------------------------------------------|
+| Companion Avatar  | Front‑facing emotional interface, expressive and reactive            |
+| Agent / Agents    | Backend intelligence: reasoning, security expertise, tone detection, multi‑modal response generation |
+| Accessible WebApp | User portal: interaction, accessibility‑first design, and deployment hub on Azure |
+
+---
+
+## 1. Companion Avatar (One Arm of the System)
+
+**Purpose:**  
+Sentali’s expressive face — built for emotional clarity, accessibility, and immersion.
+
+**Tech Stack:**
+- VRM format (Unity WebGL for Azure hosting, or Three.js for lightweight web use)
+- Blendshape control via VMC Protocol or WebSocket bridge
+- Azure TTS (SSML‑driven) for expressive voice
+- Expression mapping tied to agent‑detected tone or pre‑tagged audio
+
+**Key Tasks:**
+- Finalize blendshape rig: Joy, Sorrow, Angry, Fun, Neutral, Blink, Look directions, visemes (A‑I‑U‑E‑O)
+- Script tone‑triggered blendshape transitions
+- Integrate and test lip sync (confirmed functional in VSeeFace)
+- Establish idle/default animation logic (e.g., Joy at rest)
+- Prepare interim JSON‑driven playback system for testing with provided audio files until live agent hookup
+
+---
+
+## 2. Agent / Agents (The Brain Behind Sentali)
+
+**Purpose:**  
+Azure‑powered intelligence with full conversational + security capabilities and a path to multi‑agent personalities.
+
+**Core Services:**
+- **Azure OpenAI** – Contextual, natural language generation for general + security topics
+- **Azure Text Analytics (Language Service)** – Sentiment, emotion, intent detection for tone mapping
+- **Azure Functions** – Modular services for expression mapping, code analysis, threat intelligence queries, interaction logging
+- **Azure TTS** – Multi‑style SSML speech synthesis, matching tone/emotion
+- **Optional:** Azure SignalR – Real‑time push for avatar state and multi‑user sessions
+- **Azure Cosmos DB / Blob Storage** – Store conversation logs, expression events, and user profiles
+- **Application Insights** – Telemetry, performance monitoring, and debugging
+
+**Security & Reasoning Skills:**
+- Answer secure coding and architecture questions
+- Run code review logic with security tooling (e.g., static analysis)
+- Summarize and explain CVEs or emerging threats
+- Model threat scenarios and recommend mitigations
+
+**Multi‑Agent Expansion:**
+- Distinct personas: Helper, Analyst, Challenger
+- Each with its own tone‑to‑expression mapping and avatar cues
+- Modular plug‑in integration for specialized tasks
+
+**Key Tasks:**
+- Implement tone‑to‑expression mapping function (core emotional driver)
+- Build function endpoints for speech generation, expression triggering, logging
+- Orchestrate secure, scalable backend ready for more agents/skills
+
+---
+
+## 3. Accessible WebApp (Built in Azure)
+
+**Purpose:**  
+The user‑facing control panel and viewport for Sentali.
+
+**Tech Stack:**
+- **Frontend:** React + Fluent UI (or Blazor) with strict accessibility compliance
+- **Backend:** Azure App Service + Functions
+- **Storage:** Azure Blob for assets, Cosmos DB for session data
+- **Authentication:** Azure AD B2C if gated features needed
+
+**Key Features:**
+- Avatar viewport (Unity WebGL or Three.js)
+- Text + voice input/output
+- Real‑time expression feedback
+- Accessibility: WCAG‑compliant contrast, ARIA roles, keyboard nav, screen reader support
+- Configurable settings for voices, themes, and expression sensitivity
+
+---
+
+## Integration Flow
+User Input ↓ Azure OpenAI → Response Text ↓ Azure Text Analytics → Tone Detection ↓ Azure Function → Expression Mapping ↓ Avatar Blendshape Trigger + Azure TTS Playback ↓ WebApp Displays Avatar + Plays Voice

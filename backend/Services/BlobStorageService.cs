@@ -10,7 +10,6 @@ namespace SentaliApp.Services
 
         public BlobStorageService(IConfiguration config, DefaultAzureCredential cred)
         {
-            // Read and clean endpoint
             var endpointRaw = config["BLOB_STORAGE_ENDPOINT"]?.Trim()
                 ?? throw new InvalidOperationException("BLOB_STORAGE_ENDPOINT is missing");
 
@@ -20,9 +19,10 @@ namespace SentaliApp.Services
             if (!Uri.TryCreate(endpointRaw, UriKind.Absolute, out var endpointUri))
                 throw new InvalidOperationException($"Invalid BLOB_STORAGE_ENDPOINT: '{endpointRaw}'");
 
-            // Connect to the container
-            _container = new BlobContainerClient(endpointUri, cred)
-                .GetBlobContainerClient(containerName);
+            // Build the container URI directly
+            var containerUri = new Uri($"{endpointUri}{containerName}");
+
+            _container = new BlobContainerClient(containerUri, cred);
         }
 
         public async Task<string> UploadAndGetSas(byte[] data)
@@ -33,7 +33,6 @@ namespace SentaliApp.Services
             using var ms = new MemoryStream(data);
             await blob.UploadAsync(ms, overwrite: true);
 
-            // Generate a short-lived SAS URL for read access
             return blob.GenerateSasUri(
                 BlobSasPermissions.Read,
                 DateTimeOffset.UtcNow.AddMinutes(5)
