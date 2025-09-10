@@ -19,7 +19,7 @@
     #control-panel {
       position: fixed;
       top: 12px;
-      left: 12px;
+      right: 12px;
       z-index: 10;
       background: rgba(0,0,0,0.65);
       padding: 8px;
@@ -89,8 +89,6 @@
 <body>
   <!-- Top-left controls -->
   <div id="control-panel">
-    <button id="speakTestBtn">Test Speak</button>
-    <button id="test">Local Test (aa)</button>
     <button id="unlockAudio">Enable Audio</button>
     <label>
       <input type="checkbox" id="blendfacesToggle" checked />
@@ -110,6 +108,7 @@
 
   <!-- VRM canvas -->
   <canvas id="c"></canvas>
-
+
+
 </body>
 </html>

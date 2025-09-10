@@ -204,14 +204,15 @@ app.MapPost("/api/tts", async (
             expression = "joy";
         }
 
-        var hub = app.Services.GetRequiredService<WsHub>();
-        hub.Broadcast(new
-        {
-            type       = "blendshapes",
-            audioUrl   = sasUrl,
-            expression,
-            visemes    = visemePayload
-        });
+        // Remove this broadcast block to prevent duplicate playback
+        // var hub = app.Services.GetRequiredService<WsHub>();
+        // hub.Broadcast(new
+        // {
+        //     type       = "blendshapes",
+        //     audioUrl   = sasUrl,
+        //     expression,
+        //     visemes    = visemePayload
+        // });
 
         return Results.Ok(new
         {
@@ -230,7 +231,6 @@ app.MapPost("/api/tts", async (
             statusCode: 500);
     }
 });
-
 // 16) Health check
 app.MapGet("/health", () => Results.Ok("App is running"));
 

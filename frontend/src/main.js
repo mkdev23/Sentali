@@ -190,6 +190,7 @@ let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
 function handleBlink(delta) {
+  console.log('[Ambient] Handling blink');
   blinkTimer -= delta;
   if (blinkTimer <= 0) {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
@@ -208,18 +209,28 @@ function handleBlink(delta) {
 }
 
 function handleGaze(delta) {
+  console.log('[Ambient] Handling gaze');
   gazeTimer -= delta;
   if (gazeTimer <= 0) {
     gazeDirection = (Math.random() - 0.5) * 0.2;
     gazeTimer = 2 + Math.random() * 2;
   }
   const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
-  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+  if (head) {
+    head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+  } else {
+    console.warn('[Ambient] No Head bone found');
+  }
 }
 
 function handleBreath(t) {
+  console.log('[Ambient] Handling breath');
   const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
-  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+  if (chest) {
+    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+  } else {
+    console.warn('[Ambient] No Chest bone found');
+  }
 }
 
 /* Load VRM + initialize ambient timers */
@@ -248,6 +259,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     rest: { blink: 0.0, neutral: 1.0 }
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
+  console.log('[VRM] Loaded successfully');
 });
 
 /* Viseme ID map from backend */
@@ -297,6 +309,7 @@ async function speakAndType(text, agentDiv) {
       return;
     }
     const body = await res.json().catch(() => null);
+    console.log('[TTS] Response body:', body);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl in response', body);
       updateChatEntry(agentDiv, 'agent', text);
@@ -305,6 +318,7 @@ async function speakAndType(text, agentDiv) {
 
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
+    audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
 
     const metadataPromise = new Promise((resolve, reject) => {
       audio.addEventListener('loadedmetadata', resolve, { once: true });
@@ -474,7 +488,11 @@ function animate() {
 
     // spine sway
     const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
-    if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+    if (spine) {
+      spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+    } else {
+      console.warn('[Ambient] No Spine bone found');
+    }
 
     // 1) expressions/visemes
     applyExpressions(dt);
@@ -484,6 +502,8 @@ function animate() {
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
+  } else {
+    console.warn('[Animate] No currentVRM');
   }
 
   controls.update();
