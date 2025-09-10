@@ -338,23 +338,62 @@ function initUI() {
 }
 initUI();
 
-/* === Animation loop === */
+// Store base chest Y position after VRM loads
+let chestBaseY = 0;
+let hasActiveExpression = false;
+let nextBlink = 0;
+
+function initAvatar(vrm) {
+  const chest = vrm.humanoid.getBoneNode('Chest');
+  if (chest) chestBaseY = chest.position.y;
+
+  // Schedule first blink
+  nextBlink = clock.getElapsedTime() + 3 + Math.random() * 2;
+}
+
+// Blink updater
+function updateBlink() {
+  const now = clock.getElapsedTime();
+  if (now > nextBlink) {
+    vrm.expressionManager.setValue('Blink', 1.0);
+    setTimeout(() => vrm.expressionManager.setValue('Blink', 0.0), 150);
+    nextBlink = now + 3 + Math.random() * 2;
+  }
+}
+
+// === Animation loop ===
 function animate() {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta();
+  const t = clock.getElapsedTime();
 
-  if (currentVRM) {
-    currentVRM.update(dt);
-    applyExpressions(dt);
-    if (shouldUseBlendfaces()) blendfaces.update(dt);
+  // Default Joy if no active expression
+  if (!hasActiveExpression) {
+    vrm.expressionManager.setValue('Joy', 1.0);
+    vrm.expressionManager.setValue('Neutral', 0.0);
   }
 
-  controls.update();
+  // Idle sway (spine)
+  const spine = vrm.humanoid.getBoneNode('Spine');
+  if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
+
+  // Breathing (chest)
+  const chest = vrm.humanoid.getBoneNode('Chest');
+  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
+
+  // Head/gaze idle motion
+  const head = vrm.humanoid.getBoneNode('Head');
+  if (head) {
+    head.rotation.y = Math.sin(t * 0.3) * 0.05; // gentle left-right
+    head.rotation.x = Math.sin(t * 0.5) * 0.02; // gentle nod
+  }
+
+  // Blinking
+  updateBlink();
+
   renderer.render(scene, camera);
 }
-animate();
 
-/* === Handle resize === */
+// === Handle resize ===
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
