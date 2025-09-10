@@ -317,10 +317,12 @@ function addChatEntry(role, text) {
   log.scrollTop = log.scrollHeight;
   return div;
 }
+
 function updateChatEntry(div, role, text) {
   if (!div) return;
   div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
 }
+
 function typeOut(el, role, text, durationMs) {
   const start = performance.now();
   const total = text.length;
@@ -331,70 +333,11 @@ function typeOut(el, role, text, durationMs) {
   function frame(now) {
     const elapsed = now - start;
     const t = Math.min(1, durationMs > 0 ? elapsed / durationMs : 1);
-    const count = Math.max(0, Math.floor(total * t));
+    const count = Math.floor(total * t);
     span.textContent = text.slice(0, count);
     if (count < total) requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-}
-async function speakAndType(text, agentDiv) {
-  try {
-    const clean = sanitizeForTTS(text);
-    const res = await fetch(`${backendBase}/api/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean })
-    });
-
-    if (!res.ok) {
-      console.error(`[TTS Error] HTTP ${res.status}`);
-      updateChatEntry(agentDiv, 'agent', text);
-      return;
-    }
-
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      console.error('[TTS Error] Expected JSON but got', contentType);
-      updateChatEntry(agentDiv, 'agent', text);
-      return;
-    }
-
-    const body = await res.json().catch(err => {
-      console.error('[TTS Error] Failed to parse JSON:', err);
-      return null;
-    });
-    if (!body?.audioUrl) {
-      console.warn('[TTS] No audioUrl in response', body);
-      updateChatEntry(agentDiv, 'agent', text);
-      return;
-    }
-
-    const audio = new Audio(body.audioUrl);
-    audio.crossOrigin = 'anonymous';
-
-    await new Promise(resolve => {
-      const done = () => resolve();
-      audio.addEventListener('loadedmetadata', done, { once: true });
-      audio.addEventListener('error', done, { once: true });
-    });
-
-    const duration =
-      Number.isFinite(audio.duration) && audio.duration > 0
-        ? audio.duration * 1000
-        : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
-
-    audio.addEventListener('play', () => {
-      typeOut(agentDiv, 'agent', text, duration);
-    }, { once: true });
-
-    audio.play().catch(err => {
-      console.warn('[TTS] Audio play failed:', err);
-      updateChatEntry(agentDiv, 'agent', text);
-    });
-  } catch (err) {
-    console.error('[TTS Error]', err);
-    updateChatEntry(agentDiv, 'agent', text);
-  }
 }
 
 async function sendToAgent() {
@@ -416,8 +359,9 @@ async function sendToAgent() {
     });
 
     const isJson = (chatRes.headers.get('content-type') || '').includes('application/json');
-    const chatBody = isJson ? await chatRes.json().catch(() => null)
-                            : await chatRes.text().catch(() => '');
+    const chatBody = isJson
+      ? await chatRes.json().catch(() => null)
+      : await chatRes.text().catch(() => '');
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, chatBody || '(no body)');
       addChatEntry('agent', '[Error contacting Agent]');
@@ -437,8 +381,6 @@ async function sendToAgent() {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
-}
-
 /* === Mic button === */
 function initMicButton() {
   const micBtn = document.getElementById('micBtn');
@@ -561,4 +503,4 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-});
+})};
