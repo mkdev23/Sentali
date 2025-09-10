@@ -9,10 +9,10 @@ import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
 const blendfacesToggle = document.getElementById('blendfacesToggle');
 
-// Set to your deployed Azure App Service base URL
+// Deployed Azure App Service base URL
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
-/* === Scene setup === */
+/* Scene setup */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
 camera.position.set(0, 1.6, 4.5);
@@ -28,7 +28,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 
-/* === OrbitControls === */
+/* OrbitControls */
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.6, 0);
 controls.enableDamping = true;
@@ -37,7 +37,7 @@ controls.minDistance = 1.0;
 controls.maxDistance = 6.0;
 controls.update();
 
-/* === Lighting === */
+/* Lighting */
 scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 const lights = [
   new THREE.DirectionalLight(0xffffff, 1.2),
@@ -49,16 +49,18 @@ lights[1].position.set(-0.5, 0.8, -0.8);
 lights[2].position.set(0, 1, -1);
 lights.forEach(l => scene.add(l));
 
-/* === Separate groups for VRM and background === */
+/* Groups */
 const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
 scene.add(vrmGroup);
 scene.add(skyGroup);
 
-let currentVRM, blendfaces, blendfacesWSHandler;
+let currentVRM;
+let blendfaces;
+let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
-/* === Load Skybox === */
+/* Load skybox */
 (async () => {
   try {
     const sb = await loadGLBSkybox(
@@ -98,7 +100,126 @@ const clock = new THREE.Clock();
   }
 })();
 
+/* Expression helpers */
+const activeExpr = {};
+const DECAY_EMO = 3.0;
+const DECAY_VISEME = 10.0;
+const SMOOTH = 0.4;
+
+function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
+  const mapped = expressionMap[name] ?? name;
+  activeExpr[mapped] = { weight, decay };
+}
+
+function applyExpressions(delta) {
+  if (!currentVRM) return;
+  for (const [m, st] of Object.entries(activeExpr)) {
+    st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
+    if (st.weight < 0.01) {
+      delete activeExpr[m];
+      continue;
+    }
+    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    const curr = mgr.getValue(m) || 0;
+    const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
+    mgr.setValue(m, blend);
+  }
+  const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+  mgr.update();
+}
+
+function shouldUseBlendfaces() {
+  return !!blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
+}
+
+/* WebSocket for visemes and blendshapes
+   Payload example:
+   { type: "blendshapes", audioUrl, expression, visemes: [{ VisemeId, TimeMs }, ...] }
+*/
+const wsClient = new WSClient({
+  url: `wss://${window.location.host}/ws`,
+  onOpen: () => console.log('WS connected'),
+  onMessage: data => {
+    // Audio from WS if present
+    const audioUrl = data.audioUrl || data.audio;
+    if (audioUrl) {
+      new Audio(audioUrl).play().catch(e => console.warn('WS audio error', e));
+    }
+
+    // Expression cue
+    if (data.expression) {
+      setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
+    }
+
+    // Visemes batch to Blendfaces bridge
+    if (Array.isArray(data.visemes) && blendfacesWSHandler) {
+      const values = {};
+      for (const v of data.visemes) values[`viseme_${v.VisemeId}`] = 1;
+      blendfacesWSHandler({ type: 'blendshapes', values });
+    }
+
+    // Legacy values bag
+    if (data.type === 'blendshapes' && data.values) {
+      for (const [n, w] of Object.entries(data.values)) {
+        setExpressionPersistent(n, Number(w), DECAY_EMO);
+      }
+    }
+
+    // Single viseme
+    if (data.type === 'viseme' && data.name) {
+      setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
+    }
+  },
+  onClose: () => console.log('WS disconnected')
+});
+wsClient.connect();
+
+function sanitizeForTTS(s) {
+  if (!s) return '';
+
+  // 1) Remove the exact marker "[No response]" without regex
+  let t = s.split('[No response]').join('').trim();
+
+  // 2) Remove supplementary-plane code points (most emoji/pictographs), no regex
+  let noEmoji = '';
+  for (const ch of t) {
+    const cp = ch.codePointAt(0);
+    if (cp !== undefined && cp <= 0xFFFF) {
+      noEmoji += ch;
+    }
+  }
+
+  // 3) Collapse whitespace (space, tab, CR, LF, FF, VT) without regex
+  let out = '';
+  let inSpace = false;
+  for (let i = 0; i < noEmoji.length; i++) {
+    const c = noEmoji[i];
+    const isWS = c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v';
+    if (isWS) {
+      if (!inSpace) {
+        out += ' ';
+        inSpace = true;
+      }
+    } else {
+      out += c;
+      inSpace = false;
+    }
+  }
+
+  // Trim ends
+  return out.trim();
+}
+
+
+
+
 /* === Load VRM and Blendfaces === */
+function initAvatar(vrm) {
+  const chest = vrm?.humanoid?.getNormalizedBoneNode?.('Chest');
+  if (chest) chestBaseY = chest.position.y;
+  nextBlink = clock.getElapsedTime() + 3 + Math.random() * 2;
+}
+
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   currentVRM = vrm;
   vrmGroup.add(vrm.scene);
@@ -106,6 +227,8 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
 
   controls.target.set(0, 1.6, 0);
   controls.update();
+
+  initAvatar(vrm); // <-- ensure ambient baselines are set
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
@@ -116,125 +239,96 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, (vrm) => {
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
 });
 
-/* === Expressions Helpers === */
-const activeExpr = {};
-const DECAY_EMO = 3.0, DECAY_VISEME = 10.0, SMOOTH = 0.4;
-
-function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
-  const mapped = expressionMap[name] ?? name;
-  activeExpr[mapped] = { weight, decay };
+/* === Chat + TTS (type as speaking) === */
+function addChatEntry(role, text) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'chat-entry';
+  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text || ''}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
 }
-function applyExpressions(delta) {
-  if (!currentVRM) return;
-  for (const [m, st] of Object.entries(activeExpr)) {
-    st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
-    if (st.weight < 0.01) { delete activeExpr[m]; continue; }
-    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-    const curr = mgr.getValue(m) || 0;
-    const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
-    mgr.setValue(m, blend);
+function updateChatEntry(div, role, text) {
+  if (!div) return;
+  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
+}
+function typeOut(el, role, text, durationMs) {
+  const start = performance.now();
+  const total = text.length;
+  const label = `<span class="chat-${role}">${role}:</span> `;
+  const spanId = `typing-${Math.random().toString(36).slice(2)}`;
+  el.innerHTML = `${label}<span id="${spanId}"></span>`;
+  const span = el.querySelector(`#${spanId}`);
+  function frame(now) {
+    const elapsed = now - start;
+    const t = Math.min(1, durationMs > 0 ? elapsed / durationMs : 1);
+    const count = Math.max(0, Math.floor(total * t));
+    span.textContent = text.slice(0, count);
+    if (count < total) requestAnimationFrame(frame);
   }
-  const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-  mgr.update();
+  requestAnimationFrame(frame);
 }
-function shouldUseBlendfaces() {
-  return blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
-}
-
-/* === WebSocket for visemes & blendshapes ===
-   Backend WS payload shape (from your controller):
-   { type: "blendshapes", audioUrl, expression, visemes: [{ VisemeId, TimeMs }, ...] }
-   Fix: handle audioUrl (previously code expected data.audio) and map visemes to values.
-*/
-const wsClient = new WSClient({
-  url: `wss://${window.location.host}/ws`,
-  onOpen: () => console.log('✅ WS connected'),
-  onMessage: data => {
-    // 1) Real-time audio from WS, if sent
-    const audioUrl = data.audioUrl || data.audio; // support either
-    if (audioUrl) {
-      new Audio(audioUrl).play().catch(e => console.warn(e));
-    }
-
-    // 2) Expression mapping, if present
-    if (data.expression) {
-      setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
-    }
-
-    // 3) Visemes support: if visemes array present, map into values for Blendfaces
-    if (Array.isArray(data.visemes) && blendfacesWSHandler) {
-      const values = {};
-      // Simple immediate pulse for each viseme id (fallback).
-      // If you want scheduled timing, we can add a scheduler later.
-      for (const v of data.visemes) {
-        values[`viseme_${v.VisemeId}`] = 1;
-      }
-      blendfacesWSHandler({ type: 'blendshapes', values });
-    }
-
-    // 4) Legacy support: if a values bag arrives, apply it directly
-    if (data.type === 'blendshapes' && data.values) {
-      for (const [n, w] of Object.entries(data.values)) {
-        setExpressionPersistent(n, Number(w), DECAY_EMO);
-      }
-    }
-
-    // 5) Single viseme
-    if (data.type === 'viseme' && data.name) {
-      setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
-    }
-  },
-  onClose: () => console.log('❌ WS disconnected')
-});
-wsClient.connect();
-
-function sanitizeForTTS(s) {
-  if (!s) return '';
-  // Drop our placeholder and trim
-  let t = s.replace(/\[No response\]/g, '').trim();
-  // Strip most emoji/pictographs (Azure Speech sometimes hates them; backend may reject)
-  t = t.replace(/\p{Extended_Pictographic}/gu, '');
-  // Collapse excessive whitespace
-  t = t.replace(/\s+/g, ' ').trim();
-  return t;
-}
-
-/* === Chat + TTS integration ===
-   Split flow:
-   - /api/chat -> reply text
-   - /api/tts  -> audio + visemes for that reply
-*/
-
-async function speak(text) {
+async function speakAndType(text, agentDiv) {
   try {
+    const clean = sanitizeForTTS(text);
     const res = await fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text: clean })
     });
 
     if (!res.ok) {
       console.error(`[TTS Error] HTTP ${res.status}`);
+      updateChatEntry(agentDiv, 'agent', text);
       return;
     }
 
-    // ✅ Parse JSON, not blob
-    const body = await res.json();
-
-    if (body && body.audioUrl) {
-      console.log('[TTS] Playing audio from', body.audioUrl);
-      const audio = new Audio(body.audioUrl);
-      audio.crossOrigin = 'anonymous';
-      await audio.play().catch(err => {
-        console.warn('[TTS] Audio play failed:', err);
-      });
-    } else {
-      console.warn('[TTS] No audioUrl in response', body);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      console.error('[TTS Error] Expected JSON but got', contentType);
+      updateChatEntry(agentDiv, 'agent', text);
+      return;
     }
+
+    const body = await res.json().catch(err => {
+      console.error('[TTS Error] Failed to parse JSON:', err);
+      return null;
+    });
+    if (!body?.audioUrl) {
+      console.warn('[TTS] No audioUrl in response', body);
+      updateChatEntry(agentDiv, 'agent', text);
+      return;
+    }
+
+    const audio = new Audio(body.audioUrl);
+    audio.crossOrigin = 'anonymous';
+
+    await new Promise(resolve => {
+      const done = () => resolve();
+      audio.addEventListener('loadedmetadata', done, { once: true });
+      audio.addEventListener('error', done, { once: true });
+    });
+
+    const duration =
+      Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration * 1000
+        : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
+
+    audio.addEventListener('play', () => {
+      typeOut(agentDiv, 'agent', text, duration);
+    }, { once: true });
+
+    audio.play().catch(err => {
+      console.warn('[TTS] Audio play failed:', err);
+      updateChatEntry(agentDiv, 'agent', text);
+    });
   } catch (err) {
     console.error('[TTS Error]', err);
+    updateChatEntry(agentDiv, 'agent', text);
   }
 }
+
 async function sendToAgent() {
   const inputEl = document.getElementById('agentInput');
   const msg = inputEl.value.trim();
@@ -247,7 +341,6 @@ async function sendToAgent() {
   inputEl.value = '';
 
   try {
-    // 1) Get GPT reply
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -264,30 +357,18 @@ async function sendToAgent() {
     }
 
     const replyRaw = (chatBody && (chatBody.text ?? chatBody.reply ?? chatBody.message)) || '';
-    const reply = replyRaw.toString();
-    if (!reply.trim()) {
+    const reply = replyRaw.toString().trim();
+    if (!reply) {
       addChatEntry('agent', '[No response]');
       return;
     }
 
-    addChatEntry('agent', reply);
-
-    // 2) Speak reply
-    await speak(reply);
-
+    const agentDiv = addChatEntry('agent', ''); // placeholder
+    await speakAndType(reply, agentDiv);
   } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
   }
-}
-
-function addChatEntry(role, text) {
-  const log = document.getElementById('chat-log');
-  const div = document.createElement('div');
-  div.className = 'chat-entry';
-  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
 }
 
 /* === Mic button === */
@@ -326,102 +407,79 @@ function initUI() {
 }
 initUI();
 
-// Store base chest Y position after VRM loads
+/* === Ambient state === */
 let chestBaseY = 0;
-let hasActiveExpression = false;
 let nextBlink = 0;
-
-// Ambient behaviour timers
 let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
-function initAvatar(vrm) {
-  const chest = vrm.humanoid.getNormalizedBoneNode('Chest');
-  if (chest) chestBaseY = chest.position.y;
-  nextBlink = clock.getElapsedTime() + 3 + Math.random() * 2;
-}
-
-// Ambient behaviour functions
+/* Ambient behaviours */
 function handleBlink(delta) {
   blinkTimer -= delta;
   if (blinkTimer <= 0) {
-    currentVRM.expressionManager.setValue('Blink', 1.0);
-    setTimeout(() => currentVRM.expressionManager.setValue('Blink', 0.0), 150);
+    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    mgr?.setValue('Blink', 1.0);
+    setTimeout(() => mgr?.setValue('Blink', 0.0), 150);
     blinkTimer = 2 + Math.random() * 3;
   }
 }
-
 function handleGaze(delta) {
   gazeTimer -= delta;
   if (gazeTimer <= 0) {
     gazeDirection = (Math.random() - 0.5) * 0.2; // small head turn
     gazeTimer = 2 + Math.random() * 2;
   }
-  const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
+  const head = currentVRM?.humanoid?.getNormalizedBoneNode?.('Head');
   if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
 }
-
-function handleBreath() {
-  const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
-  if (chest) chest.position.y = chestBaseY + Math.sin(clock.elapsedTime * 0.5) * 0.002;
+function handleBreath(t) {
+  const chest = currentVRM?.humanoid?.getNormalizedBoneNode?.('Chest');
+  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
 }
 
-// === Animation loop ===
+/* === Animation loop === */
 function animate() {
   requestAnimationFrame(animate);
 
-  const dt = clock.getDelta();           // delta time for VRM update
-  const t  = clock.getElapsedTime();     // elapsed time for idle motions
+  const dt = clock.getDelta();
+  const t  = clock.getElapsedTime();
 
   if (currentVRM) {
-    // ✅ Advance VRM's internal animation system (prevents T‑pose)
     currentVRM.update(dt);
 
     // Default Joy if no active expression
-    if (!hasActiveExpression) {
-      currentVRM.expressionManager.setValue('Joy', 1.0);
-      currentVRM.expressionManager.setValue('Neutral', 0.0);
+    if (Object.keys(activeExpr).length === 0) {
+      const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+      mgr.setValue('Joy', 1.0);
+      mgr.setValue('Neutral', 0.0);
     }
 
-    // Idle sway (spine)
-    const spine = currentVRM.humanoid.getNormalizedBoneNode('Spine');
+    // Spine sway
+    const spine = currentVRM?.humanoid?.getNormalizedBoneNode?.('Spine');
     if (spine) spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-
-    // Breathing (chest)
-    const chest = currentVRM.humanoid.getNormalizedBoneNode('Chest');
-    if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.002;
-
-    // Head/gaze idle motion
-    const head = currentVRM.humanoid.getNormalizedBoneNode('Head');
-    if (head) {
-      head.rotation.y = Math.sin(t * 0.3) * 0.05;
-      head.rotation.x = Math.sin(t * 0.5) * 0.02;
-    }
 
     // Ambient behaviours
     handleBlink(dt);
     handleGaze(dt);
-    handleBreath();
+    handleBreath(t);
 
-    // Apply any queued expressions
+    // Expressions and Blendfaces
     applyExpressions(dt);
-
-    // Update Blendfaces if enabled
-    if (shouldUseBlendfaces()) {
-      blendfaces.update(dt);
-    }
+    if (shouldUseBlendfaces()) blendfaces.update(dt);
   }
 
   controls.update();
   renderer.render(scene, camera);
 }
+animate();
 
-// === Handle resize ===
+/* === Resize === */
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+/* === Start animation loop === */
 animate();
