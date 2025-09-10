@@ -20,16 +20,27 @@ namespace SentaliApp.Services
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
 
-            var cred = new DefaultAzureCredential();
-            var token = cred.GetToken(
-                new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" }),
-                default);
+            var key = config["AZURE_TTS_KEY"];
+            var region = config["AZURE_TTS_REGION"];
 
-            Console.WriteLine("[TTS] Acquired MI token");
+            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(region))
+            {
+                Console.WriteLine("[TTS] Using key-based auth");
+                _speechConfig = SpeechConfig.FromSubscription(key, region);
+            }
+            else
+            {
+                Console.WriteLine("[TTS] Using Managed Identity auth");
+                var cred = new DefaultAzureCredential();
+                var token = cred.GetToken(
+                    new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" }),
+                    default);
 
-            _speechConfig = SpeechConfig.FromAuthorizationToken(
-                token.Token,
-                endpointUri.Host);
+                _speechConfig = SpeechConfig.FromAuthorizationToken(
+                    token.Token,
+                    endpointUri.Host);
+            }
+
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
             _speechConfig.SetSpeechSynthesisOutputFormat(
                 SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
