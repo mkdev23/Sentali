@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.CognitiveServices.Speech;   // for SpeechConfig, SpeechSynthesisVisemeEventArgs, ResultReason
-using Microsoft.CognitiveServices.Speech.Audio;  // for AudioConfig, AudioOutputStream
+using Microsoft.CognitiveServices.Speech;      // for SpeechSynthesisVisemeEventArgs
+using Microsoft.CognitiveServices.Speech.Audio;
+using SentaliApp.Models;                      // for ChatRequest, VisemePayload
 using SentaliApp.Services;
 
 namespace SentaliApp.Controllers
@@ -37,81 +39,73 @@ namespace SentaliApp.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> Post([FromBody] string text)
+        public async Task<IActionResult> Post([FromBody] ChatRequest req)
         {
-            if (string.IsNullOrWhiteSpace(text))
-                return BadRequest(new { error = "No text provided" });
+            if (req == null || string.IsNullOrWhiteSpace(req.Text))
+                return BadRequest(new { error = "Missing 'text' property" });
 
-            try
+            _logger.LogInformation("[TTS] Input: {Text}", req.Text);
+
+            // 1) GPT reply
+            var reply = await _gpt.GetResponse(req.Text);
+
+            // 2) Sentiment → expression
+            var sentiment  = await _sentiment.GetSentiment(reply);
+            var expression = sentiment switch
             {
-                _logger.LogInformation("[TTS] Input: {Text}", text);
+                "Positive" => "joy",
+                "Negative" => "angry",
+                _          => "neutral"
+            };
+            _logger.LogInformation(
+                "[TTS] Sentiment: {Sentiment}, Expression: {Expression}",
+                sentiment, expression);
 
-                // 1) Get GPT reply
-                var reply = await _gpt.GetResponse(text);
-                _logger.LogInformation("[TTS] GPT → {Reply}", reply);
+            // 3) Synthesize + collect visemes
+            (byte[] audioBytes, List<SpeechSynthesisVisemeEventArgs> visemes) 
+                = await _tts.SynthesizeWithVisemesAsync(reply);
 
-                // 2) Sentiment → expression
-                var sentiment  = await _sentiment.GetSentiment(reply);
-                var expression = sentiment switch
+            // 4) Upload audio → SAS URL
+            var audioUrl = await _blob.UploadAndGetSas(audioBytes);
+
+            // 5) Build a List<VisemePayload> with correct types
+            var visemePayload = visemes
+                .Select(v => new VisemePayload
                 {
-                    "Positive" => "joy",
-                    "Negative" => "angry",
-                    _          => "neutral"
-                };
+                    VisemeId = (uint)v.VisemeId,
+                    TimeMs   = (ulong)(v.AudioOffset / 10_000)
+                })
+                .ToList();
 
-                _logger.LogInformation(
-                    "[TTS] Sentiment: {Sentiment}, Expression: {Expression}",
-                    sentiment, expression);
-
-                // 3) Synthesize + visemes
-                (byte[] audioBytes, List<SpeechSynthesisVisemeEventArgs> visemes) 
-                    = await _tts.SynthesizeWithVisemesAsync(reply);
-
-                // 4) Upload audio, get URL
-                var audioUrl = await _blob.UploadAndGetSas(audioBytes);
-
-                // 5) Build viseme payload
-                var visemePayload = new List<object>();
-                foreach (var v in visemes)
-                {
-                    visemePayload.Add(new
-                    {
-                        VisemeId = v.VisemeId,
-                        TimeMs   = (int)(v.AudioOffset / 10_000)
-                    });
-                }
-
-                // 6) Default to joy if no visemes emitted
-                if (visemePayload.Count == 0)
-                {
-                    visemePayload.Add(new { VisemeId = 0, TimeMs = 0 });
-                    expression = "joy";
-                }
-
-                // 7) Broadcast blendshapes + audio
-                _ws.Broadcast(new
-                {
-                    type       = "blendshapes",
-                    audioUrl,
-                    expression,
-                    visemes    = visemePayload
-                });
-
-                // 8) Return to caller
-                return Ok(new
-                {
-                    text       = reply,
-                    sentiment,
-                    expression,
-                    audioUrl,
-                    visemes    = visemePayload
-                });
-            }
-            catch (Exception ex)
+            // 6) Default to joy if no visemes emitted
+            if (visemePayload.Count == 0)
             {
-                _logger.LogError(ex, "[TTS] Error");
-                return StatusCode(500, new { error = ex.Message });
+                visemePayload.Add(new VisemePayload
+                {
+                    VisemeId = 0U,
+                    TimeMs   = 0UL
+                });
+                expression = "joy";
             }
+
+            // 7) Broadcast blendshapes + audio to WebSocket clients
+            _ws.Broadcast(new
+            {
+                type       = "blendshapes",
+                audioUrl,
+                expression,
+                visemes    = visemePayload
+            });
+
+            // 8) Return structured JSON
+            return Ok(new
+            {
+                text       = reply,
+                sentiment,
+                expression,
+                audioUrl,
+                visemes    = visemePayload
+            });
         }
     }
 }
