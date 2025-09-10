@@ -23,12 +23,12 @@ namespace SentaliApp.Services
         public GptService(IConfiguration config, ILogger<GptService> logger)
         {
             _logger = logger;
-            _agentId = config["AZURE_AI_AGENT_ID"]
+            _agentId = config["AZURE_AI_AGENT_ID"]?.Trim()
                 ?? throw new Exception("Missing AZURE_AI_AGENT_ID");
-            _projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"]
-                ?? throw new Exception("Missing AZURE_AI_PROJECT_ENDPOINT");
-            _projectApiKey = config["AZURE_AI_PROJECT_KEY"]; 
-            _apiVersion = config["AZURE_AI_PROJECT_API_VERSION"] ?? "2025-05-01";
+            _projectEndpoint = (config["AZURE_AI_PROJECT_ENDPOINT"]?.TrimEnd('/')
+                ?? throw new Exception("Missing AZURE_AI_PROJECT_ENDPOINT"));
+            _projectApiKey = config["AZURE_AI_PROJECT_KEY"]?.Trim();
+            _apiVersion = config["AZURE_AI_PROJECT_API_VERSION"]?.Trim() ?? "2025-05-01";
             _http = new HttpClient();
         }
 
@@ -82,9 +82,7 @@ namespace SentaliApp.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(
-                        ex,
-                        "[Auth] Managed Identity failed, falling back to API key");
+                    _logger.LogWarning(ex, "[Auth] Managed Identity failed, falling back to API key");
                 }
 
                 if (!usedMi)
@@ -109,11 +107,7 @@ namespace SentaliApp.Services
 
                 var threadJson = await threadRes.Content.ReadAsStringAsync();
                 _logger.LogInformation("[Assistants REST] CreateThread → {Json}", threadJson);
-                var threadId = JsonDocument
-                    .Parse(threadJson)
-                    .RootElement
-                    .GetProperty("id")
-                    .GetString()!;
+                var threadId = JsonDocument.Parse(threadJson).RootElement.GetProperty("id").GetString()!;
 
                 // 2) Post the user message
                 var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version={_apiVersion}";
@@ -125,9 +119,7 @@ namespace SentaliApp.Services
                     "PostMessage",
                     msgUrl);
 
-                _logger.LogInformation(
-                    "[Assistants REST] PostMessage → {Json}",
-                    await msgRes.Content.ReadAsStringAsync());
+                _logger.LogInformation("[Assistants REST] PostMessage → {Json}", await msgRes.Content.ReadAsStringAsync());
 
                 // 3) Create a run
                 var runUrl = $"{_projectEndpoint}/threads/{threadId}/runs?api-version={_apiVersion}";
@@ -141,11 +133,7 @@ namespace SentaliApp.Services
 
                 var runJson = await runRes.Content.ReadAsStringAsync();
                 _logger.LogInformation("[Assistants REST] CreateRun → {Json}", runJson);
-                var runId = JsonDocument
-                    .Parse(runJson)
-                    .RootElement
-                    .GetProperty("id")
-                    .GetString()!;
+                var runId = JsonDocument.Parse(runJson).RootElement.GetProperty("id").GetString()!;
 
                 // 4) Poll until complete
                 string status;
@@ -159,19 +147,13 @@ namespace SentaliApp.Services
                         statusUrl);
 
                     var statusJson = await statusRes.Content.ReadAsStringAsync();
-                    status = JsonDocument
-                        .Parse(statusJson)
-                        .RootElement
-                        .GetProperty("status")
-                        .GetString()!;
+                    status = JsonDocument.Parse(statusJson).RootElement.GetProperty("status").GetString()!;
                     _logger.LogInformation("[Assistants REST] Run status: {Status}", status);
 
                     if (status == "failed")
                     {
-                        var errMessage = JsonDocument
-                            .Parse(statusJson)
-                            .RootElement
-                            .GetProperty("last_error")
+                        var errMessage = JsonDocument.Parse(statusJson)
+                            .RootElement.GetProperty("last_error")
                             .GetProperty("message")
                             .GetString();
                         throw new Exception($"Assistant run failed: {errMessage}");
@@ -198,10 +180,7 @@ namespace SentaliApp.Services
                         {
                             if (part.GetProperty("type").GetString() == "text")
                             {
-                                return part
-                                    .GetProperty("text")
-                                    .GetProperty("value")
-                                    .GetString()!;
+                                return part.GetProperty("text").GetProperty("value").GetString()!;
                             }
                         }
                     }

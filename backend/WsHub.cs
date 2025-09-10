@@ -20,7 +20,7 @@ namespace SentaliApp.Services
             Console.WriteLine("[WS] client connected");
 
             await Send(socket, new { type = "hello", msg = "connected" });
-            Broadcast(new { type = "blendshape", name = "joy", weight = 1.0 });
+            SendBlendshape("joy", 1.0);
 
             var buffer = new byte[1024 * 4];
             try
@@ -28,15 +28,11 @@ namespace SentaliApp.Services
                 while (socket.State == WebSocketState.Open)
                 {
                     var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        break;
-                    }
+                    if (result.MessageType == WebSocketMessageType.Close) break;
 
                     var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
                     Console.WriteLine("[WS] Received: " + message);
 
-                    // Echo back for now
                     await Send(socket, new { type = "echo", msg = message });
                 }
             }
@@ -58,7 +54,15 @@ namespace SentaliApp.Services
             });
 
             var bytes = Encoding.UTF8.GetBytes(json);
-            await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            try
+            {
+                await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WS] send error: {ex.Message}");
+                lock (_lock) _clients.Remove(socket);
+            }
         }
 
         public void Broadcast(object payload)
@@ -76,15 +80,25 @@ namespace SentaliApp.Services
             {
                 if (socket.State == WebSocketState.Open)
                 {
-                    socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                    _ = socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                            {
+                                Console.WriteLine($"[WS] send error: {t.Exception?.GetBaseException().Message}");
+                                lock (_lock) _clients.Remove(socket);
+                            }
+                        });
+                }
+                else
+                {
+                    lock (_lock) _clients.Remove(socket);
                 }
             }
         }
 
-        public void SendBlendshape(string name, double weight)
-        {
+        public void SendBlendshape(string name, double weight) =>
             Broadcast(new { type = "blendshape", name, weight });
-        }
 
         public void SendBlendshape(int index, double value)
         {
@@ -92,14 +106,10 @@ namespace SentaliApp.Services
             SendBlendshape(BlendshapeNames[index], value);
         }
 
-        public void SendBlendshapes(Dictionary<string, double> values)
-        {
+        public void SendBlendshapes(Dictionary<string, double> values) =>
             Broadcast(new { type = "blendshapes", values });
-        }
 
-        public void BroadcastCue(string expression, double intensity, double? duration, double atSeconds)
-        {
+        public void BroadcastCue(string expression, double intensity, double? duration, double atSeconds) =>
             Broadcast(new { type = "cue", expression, intensity, duration, timestamp = atSeconds });
-        }
     }
 }

@@ -5,16 +5,10 @@ public class VrmLoader
 {
     public ModelRoot? Model { get; private set; }
 
-    public Dictionary<string, int> LoadBlendshapeMap(string relativePath)
+    public Dictionary<string, List<int>> LoadBlendshapeMap(string relativePath)
     {
-        // Resolve VRM path relative to project root
-        var vrmPath = Path.Combine(
-            AppContext.BaseDirectory, // bin\Debug\net9.0
-            "..", "..", "..",         // back to project root
-            relativePath              // e.g., "Assets/Sentali2.vrm"
-        );
-
-        vrmPath = Path.GetFullPath(vrmPath);
+        // Resolve VRM path relative to web root so it works in Azure and locally
+        var vrmPath = Path.Combine(Directory.GetCurrentDirectory(), relativePath);
 
         if (!File.Exists(vrmPath))
             throw new FileNotFoundException($"VRM file not found: {vrmPath}");
@@ -34,7 +28,7 @@ public class VrmLoader
             throw new Exception("VRM extension not found in model.");
         }
 
-        var blendshapeMap = new Dictionary<string, int>();
+        var blendshapeMap = new Dictionary<string, List<int>>();
         var blendShapeGroups = vrmJson
             .GetProperty("blendShapeMaster")
             .GetProperty("blendShapeGroups");
@@ -42,10 +36,13 @@ public class VrmLoader
         foreach (var group in blendShapeGroups.EnumerateArray())
         {
             string name = group.GetProperty("name").GetString() ?? "unknown";
+            if (!blendshapeMap.ContainsKey(name))
+                blendshapeMap[name] = new List<int>();
+
             foreach (var bind in group.GetProperty("binds").EnumerateArray())
             {
                 int index = bind.GetProperty("index").GetInt32();
-                blendshapeMap[name] = index;
+                blendshapeMap[name].Add(index);
             }
         }
 

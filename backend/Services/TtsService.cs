@@ -7,6 +7,8 @@ using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using Microsoft.Extensions.Configuration;
+using NAudio.Wave;
+using NAudio.Lame;
 
 namespace SentaliApp.Services
 {
@@ -16,13 +18,12 @@ namespace SentaliApp.Services
 
         public TtsService(IConfiguration config)
         {
-            var endpointUrl = config["SPEECH_ENDPOINT"]
+            var endpointUrl = config["SPEECH_ENDPOINT"]?.Trim()
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
 
-            // Prefer AZURE_TTS_KEY / AZURE_TTS_REGION, but fall back to TTS_KEY / TTS_REGION
-            var key = config["AZURE_TTS_KEY"] ?? config["TTS_KEY"];
-            var region = config["AZURE_TTS_REGION"] ?? config["TTS_REGION"];
+            var key = config["AZURE_TTS_KEY"]?.Trim() ?? config["TTS_KEY"]?.Trim();
+            var region = config["AZURE_TTS_REGION"]?.Trim() ?? config["TTS_REGION"]?.Trim();
 
             if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(region))
             {
@@ -37,15 +38,11 @@ namespace SentaliApp.Services
                     new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" }),
                     default);
 
-                _speechConfig = SpeechConfig.FromAuthorizationToken(
-                    token.Token,
-                    endpointUri.Host);
+                _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
-            // Default voice
             _speechConfig.SpeechSynthesisVoiceName = "en-GB-SoniaNeural";
-            _speechConfig.SetSpeechSynthesisOutputFormat(
-                SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
         }
 
         public async Task<(byte[] Audio, List<SpeechSynthesisVisemeEventArgs> Visemes)>
@@ -59,17 +56,7 @@ namespace SentaliApp.Services
 
             synthesizer.VisemeReceived += (_, e) => visemes.Add(e);
 
-            string ssml = $@"
-<speak version='1.0' xml:lang='en-GB'
-       xmlns:mstts='https://www.w3.org/2001/mstts'>
-  <voice name='{_speechConfig.SpeechSynthesisVoiceName}'>
-    <mstts:express-as style='chat' styledegree='2'>
-      {System.Security.SecurityElement.Escape(text)}
-    </mstts:express-as>
-  </voice>
-</speak>";
-
-            var result = await synthesizer.SpeakSsmlAsync(ssml);
+            var result = await synthesizer.SpeakTextAsync(text);
 
             if (result.Reason != ResultReason.SynthesizingAudioCompleted)
             {
@@ -78,11 +65,8 @@ namespace SentaliApp.Services
                     var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
                     Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
                     Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
-                    Console.WriteLine("[TTS] Did you set the speech resource key and region correctly?");
 
-                    // Optional: fallback to a known-good voice if voice not found
-                    if (cancellation.ErrorDetails != null &&
-                        cancellation.ErrorDetails.Contains("Voice", StringComparison.OrdinalIgnoreCase))
+                    if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
                     {
                         Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
                         _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
@@ -105,5 +89,87 @@ namespace SentaliApp.Services
 
             return (ms.ToArray(), visemes);
         }
+
+        public async Task<string> SynthesizeToFileAsync(string text, string tempPath, string finalPath, string baseUrl, WsHub? ws = null)
+        {
+            using var audioConfig = AudioConfig.FromWavFileOutput(tempPath);
+            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
+
+            if (ws != null)
+            {
+                synthesizer.VisemeReceived += (s, e) =>
+                {
+                    var visemeName = MapVisemeIdToBlendshape(e.VisemeId);
+                    if (visemeName != null)
+                    {
+                        ws.Broadcast(new { type = "viseme", name = visemeName, weight = 1.0 });
+                        Task.Delay(120).ContinueWith(_ =>
+                            ws.Broadcast(new { type = "viseme", name = visemeName, weight = 0.0 })
+                        );
+                    }
+                };
+            }
+
+            var result = await synthesizer.SpeakTextAsync(text);
+
+            if (result.Reason != ResultReason.SynthesizingAudioCompleted)
+            {
+                if (result.Reason == ResultReason.Canceled)
+                {
+                    var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
+                    Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
+                    Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
+
+                    if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
+                        _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+                        return await SynthesizeToFileAsync(text, tempPath, finalPath, baseUrl, ws);
+                    }
+
+                    throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
+                }
+
+                throw new Exception($"TTS failed: {result.Reason}");
+            }
+
+            ConvertToMp3(tempPath, finalPath);
+            return $"{baseUrl}/tts/output.mp3?v={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        }
+
+        private void ConvertToMp3(string inputPath, string outputPath)
+        {
+            using var reader = new WaveFileReader(inputPath);
+            var newFormat = new WaveFormat(16000, 16, 1);
+            using var pcmStream = new WaveFormatConversionStream(newFormat, reader);
+            using var writer = new LameMP3FileWriter(outputPath, newFormat, LAMEPreset.ABR_128);
+            pcmStream.CopyTo(writer);
+        }
+
+        private string? MapVisemeIdToBlendshape(uint id) => id switch
+        {
+            0u => null,
+            1u => "aa",
+            2u => "aa",
+            3u => "ih",
+            4u => "ee",
+            5u => "oh",
+            6u => "ou",
+            7u => "ou",
+            8u => "ee",
+            9u => "ih",
+            10u => "oh",
+            11u => "ou",
+            12u => "aa",
+            13u => "ee",
+            14u => "ih",
+            15u => "oh",
+            16u => "ou",
+            17u => "aa",
+            18u => "ee",
+            19u => "ih",
+            20u => "oh",
+            _ => null
+        };
     }
 }
