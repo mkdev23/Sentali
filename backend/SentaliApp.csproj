@@ -17,9 +17,7 @@
     <PackageReference Include="Fleck" Version="1.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.WebSockets" Version="2.2.1" />
     <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.45.0" />
-
     <PackageReference Include="Microsoft.Extensions.Logging.AzureAppServices" Version="9.0.0" />
-    
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
@@ -28,12 +26,19 @@
     <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.5" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="System.Windows.Extensions" Version="9.0.8" />
+
+    <!-- Keep the VRM asset -->
     <None Include="..\frontend\public\Assets\Sentali2.vrm">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+
+    <!-- Keep your Assets folder, but exclude wwwroot to avoid duplicate Content -->
     <None Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
-      <Compile Remove="Controllers\WebhookHandler.cs" />
-  <Compile Remove="Controllers\RepeatRequest.cs" />
+    <Content Remove="wwwroot\Assets\**\*.*" />
+
+    <!-- Remove unwanted controllers from compilation -->
+    <Compile Remove="Controllers\WebhookHandler.cs" />
+    <Compile Remove="Controllers\RepeatRequest.cs" />
   </ItemGroup>
 
 </Project>
