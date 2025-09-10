@@ -92,7 +92,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
       scene.background = texture;
     } else {
       // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
-      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox_optimized.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
+      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
       sb = await loadSkyboxWithRetry(skyboxUrl);
     }
     if (sb) {
@@ -345,18 +345,24 @@ async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] Request in-flight; aborting previous and starting new');
     ttsAbortController?.abort();
-    updateChatEntry(agentDiv, 'agent', text); // Fallback to text if aborted
+    updateChatEntry(agentDiv, 'agent', text);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
   try {
     const clean = sanitizeForTTS(text);
-    const res = await fetch(`${backendBase}/api/tts`, {
+    const fetchPromise = fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: clean }),
       signal: ttsAbortController.signal
     });
+
+    // Timeout after 60s
+    const res = await Promise.race([
+      fetchPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TTS request timeout')), 60000))
+    ]);
 
     if (!res.ok) {
       console.error(`[TTS Error] HTTP ${res.status}`);
@@ -417,11 +423,13 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
     });
-  } catch (err) {
-    if (err.name !== 'AbortError') {
+} catch (err) {
+    if (err.name !== 'AbortError' && err.message !== 'TTS request timeout') {
       console.error('[TTS] Error:', err);
-      updateChatEntry(agentDiv, 'agent', text);
+    } else if (err.message === 'TTS request timeout') {
+      console.warn('[TTS] Timeout after 60s');
     }
+    updateChatEntry(agentDiv, 'agent', text);
   } finally {
     ttsInflight = false;
     ttsAbortController = null;

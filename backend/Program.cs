@@ -190,7 +190,7 @@ app.MapPost("/api/tts", async (
             .Select(v => new VisemePayload
             {
                 VisemeId = v.VisemeId,
-                TimeMs   = v.AudioOffset / 10_000UL
+                TimeMs   = (ulong)(v.AudioOffset / 10000L)
             })
             .ToList();
 
@@ -201,7 +201,7 @@ app.MapPost("/api/tts", async (
                 VisemeId = 0,
                 TimeMs   = 0
             });
-            expression = "joy";
+            expression = "happy";
         }
 
         // Remove this broadcast block to prevent duplicate playback

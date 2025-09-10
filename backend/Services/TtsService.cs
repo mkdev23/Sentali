@@ -1,3 +1,4 @@
+// TtsService.cs
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -43,20 +44,65 @@ namespace SentaliApp.Services
 
       _speechConfig.SpeechSynthesisVoiceName = "en-GB-SoniaNeural";
       _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+
+      // Dummy warm-up on startup to reduce first-call delay
+      WarmUpAsync().GetAwaiter().GetResult();
     }
 
-    public async Task<(byte[] Audio, List<SpeechSynthesisVisemeEventArgs> Visemes)>
+    private async Task WarmUpAsync()
+    {
+      try
+      {
+        Console.WriteLine("[TTS] Warming up with dummy synthesis");
+        await SynthesizeWithVisemesAsync("Warm-up test", new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+        Console.WriteLine("[TTS] Warm-up complete");
+      }
+      catch (Exception ex)
+      {
+        Console.WriteLine("[TTS] Warm-up failed: " + ex.Message);
+      }
+    }
+
+    public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
       SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
     {
-      var visemes = new List<SpeechSynthesisVisemeEventArgs>();
+      // Chunk long text to reduce latency (e.g., >100 words or 500 chars)
+      if (text.Length > 500)
+      {
+        var chunks = ChunkText(text);
+        var allAudio = new List<byte>();
+        var allVisemes = new List<(uint VisemeId, long AudioOffset)>();
+        long offsetTicks = 0; // Use ticks (100ns) for precision
+
+        foreach (var chunk in chunks)
+        {
+          var (chunkAudio, chunkVisemes) = await SynthesizeChunkAsync(chunk, cancellationToken);
+          allAudio.AddRange(chunkAudio);
+          foreach (var (visemeId, audioOffset) in chunkVisemes)
+          {
+            allVisemes.Add((visemeId, audioOffset + offsetTicks));
+          }
+          offsetTicks += GetDurationTicks(chunkAudio); // Estimate next offset in ticks
+        }
+        return (allAudio.ToArray(), allVisemes);
+      }
+      else
+      {
+        return await SynthesizeChunkAsync(text, cancellationToken);
+      }
+    }
+
+    private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
+      SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
+    {
+      var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
       using var audioStream = AudioOutputStream.CreatePullStream();
       using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
       using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
 
-      synthesizer.VisemeReceived += (_, e) => visemes.Add(e);
+      synthesizer.VisemeReceived += (_, e) => visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
 
-      // Pass cancellation token into the async call
       var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
 
       if (result.Reason != ResultReason.SynthesizingAudioCompleted)
@@ -71,7 +117,7 @@ namespace SentaliApp.Services
           {
             Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-            return await SynthesizeWithVisemesAsync(text, cancellationToken);
+            return await SynthesizeChunkAsync(text, cancellationToken);
           }
 
           throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
@@ -91,6 +137,31 @@ namespace SentaliApp.Services
       var wavBytes = ms.ToArray();
       var mp3Bytes = ConvertWavToMp3(wavBytes);
       return (mp3Bytes, visemes);
+    }
+
+    private List<string> ChunkText(string text)
+    {
+      var chunks = new List<string>();
+      var sentences = text.Split(new[] { '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+      var currentChunk = "";
+      foreach (var sentence in sentences)
+      {
+        if (currentChunk.Length + sentence.Length > 500)
+        {
+          chunks.Add(currentChunk.Trim());
+          currentChunk = "";
+        }
+        currentChunk += sentence + ". ";
+      }
+      if (!string.IsNullOrEmpty(currentChunk)) chunks.Add(currentChunk.Trim());
+      return chunks;
+    }
+
+    private long GetDurationTicks(byte[] audioBytes)
+    {
+      using var ms = new MemoryStream(audioBytes);
+      using var reader = new WaveFileReader(ms);
+      return (long)(reader.TotalTime.TotalMilliseconds * 10000); // ms to 100ns ticks
     }
 
     private byte[] ConvertWavToMp3(byte[] wavBytes)
