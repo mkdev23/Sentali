@@ -53,8 +53,4 @@ jobs:
         app-name: sentali-app-6926
         package: ./publish
 
-    # Verify asset exists
-    - name: Verify frontend asset
-      run: |
-        HASHED_JS=$(grep -oP 'assets/index-[^"]+\.js' frontend/dist/index.html | head -n 1)
-        curl -I "https://sentali-app-6926.azurewebsites.net/$HASHED_JS"
+
