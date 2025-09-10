@@ -7,11 +7,22 @@ public class VrmLoader
 
     public Dictionary<string, List<int>> LoadBlendshapeMap(string relativePath)
     {
-        // Resolve VRM path relative to web root so it works in Azure and locally
-        var vrmPath = Path.Combine(Directory.GetCurrentDirectory(), relativePath);
+        // 1) Try to resolve relative to deployed web root (Azure)
+        var vrmPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relativePath);
+
+        // 2) If not found, fall back to project root (local dev)
+        if (!File.Exists(vrmPath))
+        {
+            vrmPath = Path.Combine(
+                AppContext.BaseDirectory, // e.g., bin\Debug\net9.0
+                "..", "..", "..",         // back to project root
+                relativePath
+            );
+            vrmPath = Path.GetFullPath(vrmPath);
+        }
 
         if (!File.Exists(vrmPath))
-            throw new FileNotFoundException($"VRM file not found: {vrmPath}");
+            throw new FileNotFoundException($"VRM file not found in either wwwroot or project root: {vrmPath}");
 
         // Load the model into SharpGLTF so you can still use it later if needed
         Model = ModelRoot.Load(vrmPath);

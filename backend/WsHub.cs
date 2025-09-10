@@ -15,36 +15,39 @@ namespace SentaliApp.Services
         };
 
         public async Task HandleClientAsync(WebSocket socket)
+{
+    lock (_lock) _clients.Add(socket);
+    Console.WriteLine("[WS] client connected");
+
+    // Send hello directly to this socket
+    await Send(socket, new { type = "hello", msg = "connected" });
+
+    // Immediately broadcast joy to all clients (including this one)
+    Broadcast(new { type = "blendshape", name = "joy", weight = 1.0 });
+
+    var buffer = new byte[1024 * 4];
+    try
+    {
+        while (socket.State == WebSocketState.Open)
         {
-            lock (_lock) _clients.Add(socket);
-            Console.WriteLine("[WS] client connected");
+            var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
 
-            await Send(socket, new { type = "hello", msg = "connected" });
-            SendBlendshape("joy", 1.0);
+            var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+            Console.WriteLine("[WS] Received: " + message);
 
-            var buffer = new byte[1024 * 4];
-            try
-            {
-                while (socket.State == WebSocketState.Open)
-                {
-                    var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                    if (result.MessageType == WebSocketMessageType.Close) break;
-
-                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    Console.WriteLine("[WS] Received: " + message);
-
-                    await Send(socket, new { type = "echo", msg = message });
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("[WS] error: " + ex.Message);
-            }
-
-            lock (_lock) _clients.Remove(socket);
-            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
-            Console.WriteLine("[WS] client disconnected");
+            await Send(socket, new { type = "echo", msg = message });
         }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("[WS] error: " + ex.Message);
+    }
+
+    lock (_lock) _clients.Remove(socket);
+    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+    Console.WriteLine("[WS] client disconnected");
+}
 
         private async Task Send(WebSocket socket, object payload)
         {

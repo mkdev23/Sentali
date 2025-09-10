@@ -61,17 +61,15 @@ if (!string.IsNullOrWhiteSpace(openAiEndpoint) &&
 // 6) Core services
 builder.Services.AddSingleton<SentimentService>();
 builder.Services.AddSingleton<BlobStorageService>();
-
-// Remove AzureSpeechService registration
-// builder.Services.AddSingleton<AzureSpeechService>();
-
-// Register the new TtsService with viseme support
 builder.Services.AddSingleton<TtsService>();
 
 // 7) MVC Controllers (if you have any)
 builder.Services.AddControllers();
 
 var app = builder.Build();
+
+// Enable WebSockets early in the pipeline
+app.UseWebSockets();
 
 // 8) Dev exception page and CORS
 if (app.Environment.IsDevelopment())
@@ -167,7 +165,7 @@ app.MapPost("/api/tts", async (
     SentimentService sentiment,
     TtsService tts,
     BlobStorageService blob,
-    [FromBody] ChatRequest req,   // Accepts { "text": "..." }
+    [FromBody] ChatRequest req,
     ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("TtsEndpoint");
@@ -177,7 +175,6 @@ app.MapPost("/api/tts", async (
 
     try
     {
-        // 1) Sentiment → expression
         var sent       = await sentiment.GetSentiment(req.Text);
         var expression = sent switch
         {
@@ -186,13 +183,9 @@ app.MapPost("/api/tts", async (
             _          => "neutral"
         };
 
-        // 2) Synthesize with visemes
         var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(req.Text);
-
-        // 3) Upload audio
         var sasUrl = await blob.UploadAndGetSas(audioBytes);
 
-        // 4) Build viseme payload
         var visemePayload = visemes
             .Select(v => new VisemePayload
             {
@@ -201,7 +194,6 @@ app.MapPost("/api/tts", async (
             })
             .ToList();
 
-        // 5) If no visemes emitted, inject a joy cue at t=0
         if (visemePayload.Count == 0)
         {
             visemePayload.Add(new VisemePayload
@@ -212,7 +204,6 @@ app.MapPost("/api/tts", async (
             expression = "joy";
         }
 
-        // 6) Broadcast over WebSocket
         var hub = app.Services.GetRequiredService<WsHub>();
         hub.Broadcast(new
         {
@@ -222,7 +213,6 @@ app.MapPost("/api/tts", async (
             visemes    = visemePayload
         });
 
-        // 7) Return payload
         return Results.Ok(new
         {
             sentiment  = sent,
@@ -241,16 +231,12 @@ app.MapPost("/api/tts", async (
     }
 });
 
-
-
-
 // 16) Health check
 app.MapGet("/health", () => Results.Ok("App is running"));
 
 // 17) WebSocket endpoint at /ws
 app.Map("/ws", wsApp =>
 {
-    wsApp.UseWebSockets();
     wsApp.Run(async context =>
     {
         if (context.WebSockets.IsWebSocketRequest)
