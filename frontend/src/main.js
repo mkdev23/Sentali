@@ -56,15 +56,45 @@ let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
-// Load skybox
+// Mobile detection
+function isMobile() {
+  return /Mobi|Android/i.test(navigator.userAgent);
+}
+
+// Load skybox with timeout/retry and mobile fallback
+async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await Promise.race([
+        loadGLBSkybox(url, scene, camera, { desiredRadius: camera.far * 0.9, setSceneBackground: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
+      ]);
+    } catch (err) {
+      console.warn(`[Skybox] Attempt ${attempt} failed:`, err);
+      if (attempt === retries) throw err;
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Backoff
+    }
+  }
+}
+
 (async () => {
   try {
-    const sb = await loadGLBSkybox(
-      'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D',
-      scene,
-      camera,
-      { desiredRadius: camera.far * 0.9, setSceneBackground: true }
-    );
+    let sb;
+    if (isMobile()) {
+      // Mobile fallback: simpler cubemap (upload PNGs to Blob/CDN; replace with your URLs)
+      console.log('[Skybox] Using mobile cubemap fallback');
+      const loader = new THREE.CubeTextureLoader();
+      const texture = loader.load([
+        'px.png', 'nx.png', // Right/left
+        'py.png', 'ny.png', // Top/bottom
+        'pz.png', 'nz.png'  // Front/back
+      ]);
+      scene.background = texture;
+    } else {
+      // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
+      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox_optimized.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
+      sb = await loadSkyboxWithRetry(skyboxUrl);
+    }
     if (sb) {
       const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
       sb.traverse(child => {
@@ -93,6 +123,8 @@ const clock = new THREE.Clock();
     }
   } catch (err) {
     console.error('Skybox load failed:', err);
+    // Fallback solid color (black to avoid blue)
+    renderer.setClearColor(0x000000, 1);
   }
 })();
 
