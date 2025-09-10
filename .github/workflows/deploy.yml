@@ -43,7 +43,7 @@ jobs:
     # Copy frontend into publish output
     - name: Copy frontend to publish output
       run: |
-        rm -rf ./publish/wwwroot/*
+        mkdir -p ./publish/wwwroot
         cp -r frontend/dist/* ./publish/wwwroot/
 
     # Deploy to Azure

@@ -1,6 +1,7 @@
 # Node / Frontend
 node_modules/
 dist/
+frontend/dist/
 build/
 .cache/
 *.log
@@ -18,6 +19,7 @@ package-lock.json
 # .NET / Backend
 bin/
 obj/
+publish/
 *.user
 *.suo
 *.userosscache
@@ -33,6 +35,8 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-#archive
+# Archive
 ./archive
+
+# Specific assets
 /public/skybox/*.glb
