@@ -90,7 +90,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
       scene.environment = texture; // For PBR if needed
     } else {
       // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
-      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox_optimized.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
+      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
       const sb = await loadSkyboxWithRetry(skyboxUrl);
       if (sb) {
         const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
@@ -547,10 +547,10 @@ function animate() {
   if (currentVRM) {
     currentVRM.update(dt);
 
-    // default neutral "Joy" expression
-    if (Object.keys(activeExpr).length === 0 && !shouldUseBlendfaces()) {
+// default neutral "happy" expression (ambient idle)
+    if (Object.keys(activeExpr).length === 0) {
       const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-      mgr.setValue('happy', 1.0); // Updated to match model
+      mgr.setValue('happy', 1.0);
       mgr.setValue('neutral', 0.0);
     }
 

@@ -178,12 +178,14 @@ app.MapPost("/api/tts", async (
         var sent       = await sentiment.GetSentiment(req.Text);
         var expression = sent switch
         {
-            "Positive" => "smile",
-            "Negative" => "frown",
+            "Positive" => "happy", // Updated to match model
+            "Negative" => "angry",
+            "Mixed" => "surprised",
             _          => "neutral"
         };
 
         var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(req.Text);
+
         var sasUrl = await blob.UploadAndGetSas(audioBytes);
 
         var visemePayload = visemes
@@ -203,16 +205,6 @@ app.MapPost("/api/tts", async (
             });
             expression = "happy";
         }
-
-        // Remove this broadcast block to prevent duplicate playback
-        // var hub = app.Services.GetRequiredService<WsHub>();
-        // hub.Broadcast(new
-        // {
-        //     type       = "blendshapes",
-        //     audioUrl   = sasUrl,
-        //     expression,
-        //     visemes    = visemePayload
-        // });
 
         return Results.Ok(new
         {
