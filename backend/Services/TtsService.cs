@@ -63,7 +63,7 @@ namespace SentaliApp.Services
       }
     }
 
-    public async Task<(byte[] Audio, List<(uint VisemeId, ulong AudioOffset)> Visemes)>
+    public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
       SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
     {
       // Chunk long text to reduce latency (e.g., >100 words or 500 chars)
@@ -71,8 +71,8 @@ namespace SentaliApp.Services
       {
         var chunks = ChunkText(text);
         var allAudio = new List<byte>();
-        var allVisemes = new List<(uint VisemeId, ulong AudioOffset)>();
-        ulong offsetTicks = 0UL; // Use ulong for ticks (100ns)
+        var allVisemes = new List<(uint VisemeId, long AudioOffset)>();
+        long offsetTicks = 0; // Use ticks (100ns) for precision
 
         foreach (var chunk in chunks)
         {
@@ -82,7 +82,7 @@ namespace SentaliApp.Services
           {
             allVisemes.Add((visemeId, audioOffset + offsetTicks));
           }
-          offsetTicks += (ulong)GetDurationTicks(chunkAudio); // Estimate next offset in ticks
+          offsetTicks += GetDurationTicks(chunkAudio); // Estimate next offset in ticks
         }
         return (allAudio.ToArray(), allVisemes);
       }
@@ -92,82 +92,71 @@ namespace SentaliApp.Services
       }
     }
 
-    private async Task<(byte[] Audio, List<(uint VisemeId, ulong AudioOffset)> Visemes)>
-      SynthesizeChunkAsync(string text, CancellationToken cancellationToken, int retries = 3)
+    private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
+      SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
     {
-      for (int attempt = 1; attempt <= retries; attempt++)
+      var visemes = new List<(uint VisemeId, long AudioOffset)>();
+
+      using var audioStream = AudioOutputStream.CreatePullStream();
+      using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
+      using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
+
+      synthesizer.VisemeReceived += (_, e) => visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
+
+      var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
+
+      if (result.Reason != ResultReason.SynthesizingAudioCompleted)
       {
-        try
+        if (result.Reason == ResultReason.Canceled)
         {
-          var visemes = new List<(uint VisemeId, ulong AudioOffset)>();
+          var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
+          Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
+          Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
 
-          using var audioStream = AudioOutputStream.CreatePullStream();
-          using var audioConfig = AudioConfig.FromStreamOutput(audioStream);
-          using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
-
-          synthesizer.VisemeReceived += (_, e) => visemes.Add(((uint)e.VisemeId, (ulong)e.AudioOffset));
-
-          var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
-
-          if (result.Reason != ResultReason.SynthesizingAudioCompleted)
+          if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
           {
-            if (result.Reason == ResultReason.Canceled)
-            {
-              var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
-              Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
-              Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
-
-              if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
-              {
-                Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
-                _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-                return await SynthesizeChunkAsync(text, cancellationToken);
-              }
-
-              throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
-            }
-
-            throw new Exception($"TTS failed: {result.Reason}");
+            Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
+            _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+            return await SynthesizeChunkAsync(text, cancellationToken);
           }
 
-          await using var ms = new MemoryStream();
-          var buffer = new byte[32_000];
-          uint bytesRead;
-          while ((bytesRead = audioStream.Read(buffer)) > 0)
-          {
-            ms.Write(buffer, 0, (int)bytesRead);
-          }
+          throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
+        }
 
-          var wavBytes = ms.ToArray();
-          var mp3Bytes = ConvertWavToMp3(wavBytes);
-          return (mp3Bytes, visemes);
-        }
-        catch (Exception ex when (attempt < retries))
-        {
-          Console.WriteLine($"[TTS] Chunk attempt {attempt} failed: {ex.Message}. Retrying...");
-          await Task.Delay(1000); // Backoff
-        }
+        throw new Exception($"TTS failed: {result.Reason}");
       }
-      throw new Exception("[TTS] Max retries exceeded for chunk synthesis");
+
+      await using var ms = new MemoryStream();
+      var buffer = new byte[32_000];
+      uint bytesRead;
+      while ((bytesRead = audioStream.Read(buffer)) > 0)
+      {
+        ms.Write(buffer, 0, (int)bytesRead);
+      }
+
+      var wavBytes = ms.ToArray();
+      var mp3Bytes = ConvertWavToMp3(wavBytes);
+      return (mp3Bytes, visemes);
     }
 
-    private List<string> ChunkText(string text)
+private List<string> ChunkText(string text)
+{
+    var chunks = new List<string>();
+    var sentences = text.Split(new[] { '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+    var currentChunk = "";
+    foreach (var sentence in sentences)
     {
-      var chunks = new List<string>();
-      var sentences = text.Split(new[] { '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
-      var currentChunk = "";
-      foreach (var sentence in sentences)
-      {
         if (currentChunk.Length + sentence.Length > 500)
         {
-          chunks.Add(currentChunk.Trim());
-          currentChunk = "";
+            chunks.Add(currentChunk.Trim());
+            currentChunk = "";
         }
         currentChunk += sentence + ". ";
-      }
-      if (!string.IsNullOrEmpty(currentChunk)) chunks.Add(currentChunk.Trim());
-      return chunks;
     }
+    if (!string.IsNullOrEmpty(currentChunk))
+        chunks.Add(currentChunk.Trim());
+    return chunks;
+}
 
     private long GetDurationTicks(byte[] audioBytes)
     {
