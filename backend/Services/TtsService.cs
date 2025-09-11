@@ -66,30 +66,12 @@ namespace SentaliApp.Services
     public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
       SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
     {
-      // Chunk long text to reduce latency (e.g., >100 words or 500 chars)
-      if (text.Length > 500)
-      {
-        var chunks = ChunkText(text);
-        var allAudio = new List<byte>();
-        var allVisemes = new List<(uint VisemeId, long AudioOffset)>();
-        long offsetTicks = 0; // Use ticks (100ns) for precision
+      Console.WriteLine("[TTS] SynthesizeWithVisemesAsync started for text: " + text);
 
-        foreach (var chunk in chunks)
-        {
-          var (chunkAudio, chunkVisemes) = await SynthesizeChunkAsync(chunk, cancellationToken);
-          allAudio.AddRange(chunkAudio);
-          foreach (var (visemeId, audioOffset) in chunkVisemes)
-          {
-            allVisemes.Add((visemeId, audioOffset + offsetTicks));
-          }
-          offsetTicks += GetDurationTicks(chunkAudio); // Estimate next offset in ticks
-        }
-        return (allAudio.ToArray(), allVisemes);
-      }
-      else
-      {
+      // Temporarily disable chunking to match direct curl
+      // if (text.Length > 500) { ... } else {
         return await SynthesizeChunkAsync(text, cancellationToken);
-      }
+      // }
     }
 
     private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
@@ -103,7 +85,10 @@ namespace SentaliApp.Services
 
       synthesizer.VisemeReceived += (_, e) => visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
 
-      var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
+      Console.WriteLine("[TTS] Calling SpeakTextAsync");
+      var resultTask = synthesizer.SpeakTextAsync(text);
+      var result = await resultTask.WaitAsync(cancellationToken);
+      Console.WriteLine("[TTS] SpeakTextAsync completed");
 
       if (result.Reason != ResultReason.SynthesizingAudioCompleted)
       {
@@ -126,6 +111,7 @@ namespace SentaliApp.Services
         throw new Exception($"TTS failed: {result.Reason}");
       }
 
+      Console.WriteLine("[TTS] Reading audio stream");
       await using var ms = new MemoryStream();
       var buffer = new byte[32_000];
       uint bytesRead;
@@ -133,37 +119,14 @@ namespace SentaliApp.Services
       {
         ms.Write(buffer, 0, (int)bytesRead);
       }
+      Console.WriteLine("[TTS] Audio stream read complete");
 
       var wavBytes = ms.ToArray();
       var mp3Bytes = ConvertWavToMp3(wavBytes);
       return (mp3Bytes, visemes);
     }
 
-private List<string> ChunkText(string text)
-{
-    var chunks = new List<string>();
-    var sentences = text.Split(new[] { '.', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
-    var currentChunk = "";
-    foreach (var sentence in sentences)
-    {
-        if (currentChunk.Length + sentence.Length > 500)
-        {
-            chunks.Add(currentChunk.Trim());
-            currentChunk = "";
-        }
-        currentChunk += sentence + ". ";
-    }
-    if (!string.IsNullOrEmpty(currentChunk))
-        chunks.Add(currentChunk.Trim());
-    return chunks;
-}
-
-    private long GetDurationTicks(byte[] audioBytes)
-    {
-      using var ms = new MemoryStream(audioBytes);
-      using var reader = new WaveFileReader(ms);
-      return (long)(reader.TotalTime.TotalMilliseconds * 10000); // ms to 100ns ticks
-    }
+    // Removed ChunkText and GetDurationTicks temporarily
 
     private byte[] ConvertWavToMp3(byte[] wavBytes)
     {
