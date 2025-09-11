@@ -344,6 +344,23 @@ function resolveMouth(name) {
   return null;
 }
 
+/* 🔹 Mouth masking helpers: ensure expressions never override viseme mouth while speaking */
+const mouthAliasList = [
+  ...vowelAliases.aa, ...vowelAliases.ee, ...vowelAliases.ih, ...vowelAliases.oh, ...vowelAliases.ou,
+  'aa', 'ee', 'ih', 'oh', 'ou', 'A', 'E', 'I', 'O', 'U'
+];
+const mouthSet = new Set(mouthAliasList);
+
+function maskMouthShapesWhileSpeaking(mgr) {
+  if (!isSpeaking) return;
+  // Zero out any mouth-related blendshapes an expression may have set this frame
+  for (const key of Object.keys(expressionMap || {})) {
+    if (mouthSet.has(key)) {
+      mgr.setValue(key, 0.0);
+    }
+  }
+}
+
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
 let isSpeaking = false;
@@ -403,6 +420,7 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
+    // Keep expression (eyes/brows/etc.), mouth will be masked while speaking
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
@@ -441,6 +459,13 @@ async function speakAndType(text, agentDiv) {
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
+      // Optional: clear any residual mouth weights the frame speech ends
+      const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+      if (mgr) {
+        for (const key of mouthSet) {
+          if ((expressionMap || {})[key] !== undefined) mgr.setValue(key, 0.0);
+        }
+      }
     });
 
     audio.play().catch(err => {
@@ -576,9 +601,10 @@ function animate() {
   if (currentVRM) {
     currentVRM.update(dt);
 
+    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+
     // default neutral "happy" expression (ambient idle)
-    if (!isSpeaking && Object.keys(activeExpr).length === 0) { // 🔹 skip idle if speaking
-      const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    if (!isSpeaking && Object.keys(activeExpr).length === 0) {
       mgr.setValue('happy', 1.0);
       mgr.setValue('neutral', 0.0);
     }
@@ -599,6 +625,12 @@ function animate() {
 
     // 1) expressions/visemes
     applyExpressions(dt);
+
+    // 🔹 Ensure mouth is not overridden by expressions while speaking
+    if (isSpeaking && mgr) {
+      maskMouthShapesWhileSpeaking(mgr);
+    }
+
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
     // 2) ambient: breathe → gaze → blink
