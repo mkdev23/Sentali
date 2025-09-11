@@ -66,7 +66,7 @@ namespace SentaliApp.Controllers
                 var visemePayload = visemes.Select(v => new
                 {
                     VisemeId = v.VisemeId,
-                    TimeMs = (ulong)(v.AudioOffset / 10_000) // 100ns → ms
+                    TimeMs = (ulong)(v.AudioOffset / 10000L) // 100ns → ms
                 }).ToList();
 
                 return Ok(new

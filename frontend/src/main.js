@@ -8,7 +8,6 @@ import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
 // UI toggles and endpoints
-const blendfacesToggle = document.getElementById('blendfacesToggle');
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
 // Scene, camera, renderer
@@ -61,7 +60,7 @@ function isMobile() {
   return /Mobi|Android/i.test(navigator.userAgent);
 }
 
-// Load skybox with timeout/retry and mobile fallback
+// Load skybox with timeout/retry and mobile fallback to PNG
 async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -79,47 +78,46 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
 
 (async () => {
   try {
-    let sb;
     if (isMobile()) {
-      // Mobile fallback: simpler cubemap (upload PNGs to Blob/CDN; replace with your URLs)
-      console.log('[Skybox] Using mobile cubemap fallback');
-      const loader = new THREE.CubeTextureLoader();
-      const texture = loader.load([
-        'px.png', 'nx.png', // Right/left
-        'py.png', 'ny.png', // Top/bottom
-        'pz.png', 'nz.png'  // Front/back
-      ]);
+      // Mobile fallback: PNG equirectangular (upload to Blob/CDN if needed; direct path here)
+      console.log('[Skybox] Using mobile PNG fallback');
+      const loader = new THREE.TextureLoader();
+      const texture = await loader.loadAsync('/skybox/background1.png');
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = false;
       scene.background = texture;
+      scene.environment = texture; // For PBR if needed
     } else {
       // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
-      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
-      sb = await loadSkyboxWithRetry(skyboxUrl);
-    }
-    if (sb) {
-      const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
-      sb.traverse(child => {
-        if (child.isMesh) {
-          const tex = child.material.map || child.material.emissiveMap;
-          if (tex) {
-            tex.mapping = THREE.EquirectangularReflectionMapping;
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.flipY = false;
-            tex.generateMipmaps = true;
-            tex.minFilter = THREE.LinearMipmapLinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-            tex.anisotropy = maxAniso;
-            scene.background = tex;
+      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox_optimized.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
+      const sb = await loadSkyboxWithRetry(skyboxUrl);
+      if (sb) {
+        const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
+        sb.traverse(child => {
+          if (child.isMesh) {
+            const tex = child.material.map || child.material.emissiveMap;
+            if (tex) {
+              tex.mapping = THREE.EquirectangularReflectionMapping;
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.flipY = false;
+              tex.generateMipmaps = true;
+              tex.minFilter = THREE.LinearMipmapLinearFilter;
+              tex.magFilter = THREE.LinearFilter;
+              tex.anisotropy = maxAniso;
+              scene.background = tex;
+            }
+            child.material = new THREE.MeshBasicMaterial({
+              map: tex,
+              side: THREE.BackSide,
+              toneMapped: false
+            });
           }
-          child.material = new THREE.MeshBasicMaterial({
-            map: tex,
-            side: THREE.BackSide,
-            toneMapped: false
-          });
-        }
-      });
-      sb.rotation.y = Math.PI;
-      sb.scale.setScalar(camera.far * 0.9);
-      skyGroup.add(sb);
+        });
+        sb.rotation.y = Math.PI;
+        sb.scale.setScalar(camera.far * 0.9);
+        skyGroup.add(sb);
+      }
     }
   } catch (err) {
     console.error('Skybox load failed:', err);
@@ -156,7 +154,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return !!blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
+  return !!blendfaces; // Removed toggle; assume always on
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -345,7 +343,7 @@ async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] Request in-flight; aborting previous and starting new');
     ttsAbortController?.abort();
-    updateChatEntry(agentDiv, 'agent', text);
+    updateChatEntry(agentDiv, 'agent', text); // Fallback to text if aborted
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
@@ -423,7 +421,7 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
     });
-} catch (err) {
+  } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS request timeout') {
       console.error('[TTS] Error:', err);
     } else if (err.message === 'TTS request timeout') {
