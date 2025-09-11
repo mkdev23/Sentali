@@ -337,6 +337,7 @@ const visemeMap = {
 
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
+let isSpeaking = false;
 let ttsAbortController = null;
 
 async function speakAndType(text, agentDiv) {
@@ -395,6 +396,7 @@ async function speakAndType(text, agentDiv) {
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
     audio.addEventListener('play', () => {
+      isSpeaking = true; // 🔹 start of speech
       typeOut(agentDiv, 'agent', text, durationMs);
 
       if (shouldUseBlendfaces() && blendfaces) {
@@ -417,9 +419,14 @@ async function speakAndType(text, agentDiv) {
       }
     }, { once: true });
 
+    audio.addEventListener('ended', () => {
+      isSpeaking = false; // 🔹 end of speech
+    });
+
     audio.play().catch(err => {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
+      isSpeaking = false;
     });
   } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS request timeout') {
@@ -428,11 +435,13 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Timeout after 60s');
     }
     updateChatEntry(agentDiv, 'agent', text);
+    isSpeaking = false;
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
   }
 }
+
 
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
@@ -547,8 +556,8 @@ function animate() {
   if (currentVRM) {
     currentVRM.update(dt);
 
-// default neutral "happy" expression (ambient idle)
-    if (Object.keys(activeExpr).length === 0) {
+    // default neutral "happy" expression (ambient idle)
+    if (!isSpeaking && Object.keys(activeExpr).length === 0) { // 🔹 skip idle if speaking
       const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
       mgr.setValue('happy', 1.0);
       mgr.setValue('neutral', 0.0);
