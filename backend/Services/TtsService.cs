@@ -7,8 +7,6 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.Extensions.Configuration;
-using NAudio.Wave;
-using NAudio.Lame;
 
 namespace SentaliApp.Services
 {
@@ -41,17 +39,16 @@ namespace SentaliApp.Services
                 _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
-            // Force known-good viseme-capable voice for debug
+            // Use MP3 directly from Azure Speech
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
 
-            // Explicitly request viseme events
+            // Enable viseme events
             _speechConfig.SetServiceProperty(
                 "speech.synthesis.requestViseme",
                 "true",
                 ServicePropertyChannel.UriQueryParameter
-);
-
+            );
 
             WarmUpAsync().GetAwaiter().GetResult();
         }
@@ -112,26 +109,15 @@ namespace SentaliApp.Services
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
-            var wavBytes = result.AudioData;
-            if (wavBytes == null || wavBytes.Length == 0)
+            var mp3Bytes = result.AudioData;
+            if (mp3Bytes == null || mp3Bytes.Length == 0)
             {
                 Console.WriteLine("[TTS] WARNING: Synth returned 0 bytes — retrying once...");
                 return await SynthesizeChunkAsync(text, cancellationToken);
             }
 
-            var mp3Bytes = ConvertWavToMp3(wavBytes);
             Console.WriteLine($"[TTS] Done: audio={mp3Bytes.Length}B, visemes={visemes.Count}");
             return (mp3Bytes, visemes);
-        }
-
-        private byte[] ConvertWavToMp3(byte[] wavBytes)
-        {
-            using var inputMs = new MemoryStream(wavBytes);
-            using var reader = new WaveFileReader(inputMs);
-            using var outputMs = new MemoryStream();
-            using var writer = new LameMP3FileWriter(outputMs, reader.WaveFormat, LAMEPreset.ABR_128);
-            reader.CopyTo(writer);
-            return outputMs.ToArray();
         }
 
         public string? MapVisemeIdToBlendshape(uint id) => id switch
