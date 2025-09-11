@@ -312,40 +312,42 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 });
 
 /* Viseme ID map from backend */
+// Backend → VRM viseme aliasing
 const visemeMap = {
-  1: 'aa',
-  2: 'aa',
-  3: 'ih',
-  4: 'ee',
-  5: 'oh',
-  6: 'ou',
-  7: 'ou',
-  8: 'ee',
-  9: 'ih',
-  10: 'oh',
-  11: 'ou',
-  12: 'aa',
-  13: 'ee',
-  14: 'ih',
-  15: 'oh',
-  16: 'ou',
-  17: 'aa',
-  18: 'ee',
-  19: 'ih',
-  20: 'oh'
+  1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
+  6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
+  11: 'ou', 12: 'aa', 13: 'ee', 14: 'ih', 15: 'oh',
+  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh'
 };
+
+// Aliases for common VRM/VRM0 vowel presets
+const vowelAliases = {
+  aa: ['aa', 'A', 'vrc.v_aa', 'vowel_A'],
+  ee: ['ee', 'E', 'vrc.v_ee', 'vowel_E'],
+  ih: ['ih', 'I', 'vrc.v_ih', 'vowel_I'],
+  oh: ['oh', 'O', 'vrc.v_oh', 'vowel_O'],
+  ou: ['ou', 'U', 'vrc.v_ou', 'vowel_U']
+};
+
+// Resolve to a mouth expression that actually exists in your VRM/expressionMap
+function resolveMouth(name) {
+  const candidates = vowelAliases[name] || [name];
+  const available = new Set(Object.keys(expressionMap || {}));
+  for (const c of candidates) {
+    if (available.has(c)) return c;
+  }
+  // Last‑chance fallbacks if your map doesn’t list vowels explicitly
+  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
+  if (fallback && available.has(fallback)) return fallback;
+  // If still nothing, return null so we don’t spam set calls that do nothing
+  console.warn('[Viseme] No matching expression for', name, 'in expressionMap keys:', [...available]);
+  return null;
+}
 
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
-
-// Map backend viseme names to VRM vowel shapes if needed
-const vrmMouthAlias = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' };
-
-function resolveMouth(name) {
-  return vrmMouthAlias[name] || name;
-}
 
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
@@ -378,18 +380,14 @@ async function speakAndType(text, agentDiv) {
 
     const body = await res.json().catch(() => null);
     console.log('[TTS] Response body:', body);
-
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl in response', body);
       updateChatEntry(agentDiv, 'agent', text);
       return;
     }
 
-    const visemes = body.visemes || [];
+    const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
-
-    const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-    if (mgr) console.log('[VRM] Expressions available:', mgr.getExpressionNames());
 
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
@@ -418,20 +416,25 @@ async function speakAndType(text, agentDiv) {
             const src = visemeMap[v.VisemeId];
             if (!src) return null;
             const name = resolveMouth(src);
+            if (!name) return null;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
             return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
           .filter(Boolean);
-        blendfaces.loadTimeline(keys);
-        blendfaces.playTimeline(0, audio);
+        if (keys.length) {
+          blendfaces.loadTimeline(keys);
+          blendfaces.playTimeline(0, audio);
+        } else {
+          console.warn('[Viseme] No keys generated for timeline');
+        }
       } else {
         visemes.forEach(v => {
           const src = visemeMap[v.VisemeId];
-          if (src) {
-            const name = resolveMouth(src);
-            console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
-            setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
-          }
+          if (!src) return;
+          const name = resolveMouth(src);
+          if (!name) return;
+          console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
+          setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
         });
       }
     }, { once: true });
@@ -459,7 +462,6 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
-
 
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
