@@ -7,6 +7,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
+using Microsoft.Extensions.Configuration;
 
 namespace SentaliApp.Services
 {
@@ -14,17 +15,14 @@ namespace SentaliApp.Services
     {
         private readonly SpeechConfig _speechConfig;
 
-        // Keep no-arg constructor for compatibility
-        public TtsService()
+        public TtsService(IConfiguration config)
         {
-            var endpointUrl = Environment.GetEnvironmentVariable("SPEECH_ENDPOINT")?.Trim()
+            var endpointUrl = config["SPEECH_ENDPOINT"]?.Trim()
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
 
-            var key = Environment.GetEnvironmentVariable("AZURE_TTS_KEY")?.Trim()
-                      ?? Environment.GetEnvironmentVariable("TTS_KEY")?.Trim();
-            var region = Environment.GetEnvironmentVariable("AZURE_TTS_REGION")?.Trim()
-                         ?? Environment.GetEnvironmentVariable("TTS_REGION")?.Trim();
+            var key = config["AZURE_TTS_KEY"]?.Trim() ?? config["TTS_KEY"]?.Trim();
+            var region = config["AZURE_TTS_REGION"]?.Trim() ?? config["TTS_REGION"]?.Trim();
 
             if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(region))
             {
@@ -42,21 +40,45 @@ namespace SentaliApp.Services
                 _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
+            // Use MP3 directly from Azure Speech
+            /* _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
+
+             // Enable viseme events
+             _speechConfig.SetServiceProperty(
+                 "speech.synthesis.requestViseme",
+                 "true",
+                 ServicePropertyChannel.UriQueryParameter
+             ); */
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+            // For debug, PCM is more reliable for viseme events
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+
             _speechConfig.SetServiceProperty(
                 "speech.synthesis.requestViseme",
                 "true",
                 ServicePropertyChannel.UriQueryParameter
             );
+
+
+
+            WarmUpAsync().GetAwaiter().GetResult();
         }
 
-        // Old method name preserved for controllers
-        public Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
-            SynthesizeWithVisemeAndLipsync(string text, CancellationToken cancellationToken = default)
-            => SynthesizeWithVisemesAsync(text, cancellationToken);
+        private async Task WarmUpAsync()
+        {
+            try
+            {
+                Console.WriteLine("[TTS] Warming up with dummy synthesis");
+                await SynthesizeWithVisemesAsync("Warm-up test", new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+                Console.WriteLine("[TTS] Warm-up complete");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[TTS] Warm-up failed: " + ex.Message);
+            }
+        }
 
-        // Main synthesis method
         public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
         {
@@ -64,9 +86,8 @@ namespace SentaliApp.Services
             return await SynthesizeChunkAsync(text, cancellationToken);
         }
 
-        // Single, reliable streaming implementation
         private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
-            SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
+     SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
         {
             var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
@@ -80,9 +101,8 @@ namespace SentaliApp.Services
                 visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
             };
 
+            // MemoryStream to collect audio as it arrives
             using var ms = new MemoryStream();
-
-            // Start draining audio immediately in parallel
             var readTask = Task.Run(() =>
             {
                 var buffer = new byte[32000];
@@ -102,44 +122,27 @@ namespace SentaliApp.Services
                     var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
                     Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
                     Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
+
+                    if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
+                        _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+                        return await SynthesizeChunkAsync(text, cancellationToken);
+                    }
+
                     throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
                 }
+
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
-            await readTask; // ensure all audio is read
+            // Wait for the read loop to finish
+            await readTask;
 
             var audioBytes = ms.ToArray();
             Console.WriteLine($"[TTS] Done: audio={audioBytes.Length}B, visemes={visemes.Count}");
 
             return (audioBytes, visemes);
         }
-
-        // Optional: keep mapping if you want server-side blendshape names
-        public string? MapVisemeIdToBlendshape(uint id) => id switch
-        {
-            0u => null,
-            1u => "aa",
-            2u => "aa",
-            3u => "ih",
-            4u => "ee",
-            5u => "oh",
-            6u => "ou",
-            7u => "ou",
-            8u => "ee",
-            9u => "ih",
-            10u => "oh",
-            11u => "ou",
-            12u => "aa",
-            13u => "ee",
-            14u => "ih",
-            15u => "oh",
-            16u => "ou",
-            17u => "aa",
-            18u => "ee",
-            19u => "ih",
-            20u => "oh",
-            _ => null
-        };
     }
-}
+ }
