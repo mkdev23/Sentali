@@ -351,16 +351,6 @@ const mouthAliasList = [
 ];
 const mouthSet = new Set(mouthAliasList);
 
-function maskMouthShapesWhileSpeaking(mgr) {
-  if (!isSpeaking) return;
-  // Zero out any mouth-related blendshapes an expression may have set this frame
-  for (const key of Object.keys(expressionMap || {})) {
-    if (mouthSet.has(key)) {
-      mgr.setValue(key, 0.0);
-    }
-  }
-}
-
 /* 🔹 Mouth masking helpers: ensure expressions never override viseme mouth while speaking */
 function maskMouthShapesWhileSpeaking(mgr) {
   if (!isSpeaking) return;
