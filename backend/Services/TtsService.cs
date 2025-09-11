@@ -87,10 +87,11 @@ namespace SentaliApp.Services
         }
 
         private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
-     SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
+            SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
         {
             var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
+            // Create a pull stream to capture audio and trigger events
             using var stream = AudioOutputStream.CreatePullStream();
             using var audioConfig = AudioConfig.FromStreamOutput(stream);
             using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
@@ -100,18 +101,6 @@ namespace SentaliApp.Services
                 Console.WriteLine($"[TTS] Viseme {e.VisemeId} at {e.AudioOffset} ticks");
                 visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
             };
-
-            // MemoryStream to collect audio as it arrives
-            using var ms = new MemoryStream();
-            var readTask = Task.Run(() =>
-            {
-                var buffer = new byte[32000];
-                uint bytesRead;
-                while ((bytesRead = stream.Read(buffer)) > 0)
-                {
-                    ms.Write(buffer, 0, (int)bytesRead);
-                }
-            });
 
             var result = await synthesizer.SpeakTextAsync(text).WaitAsync(cancellationToken);
 
@@ -136,13 +125,20 @@ namespace SentaliApp.Services
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
-            // Wait for the read loop to finish
-            await readTask;
+            // Read audio bytes from the pull stream
+            using var ms = new MemoryStream();
+            var buffer = new byte[32000];
+            uint bytesRead;
+            while ((bytesRead = stream.Read(buffer)) > 0)
+            {
+                ms.Write(buffer, 0, (int)bytesRead);
+            }
 
             var audioBytes = ms.ToArray();
             Console.WriteLine($"[TTS] Done: audio={audioBytes.Length}B, visemes={visemes.Count}");
 
             return (audioBytes, visemes);
         }
+
     }
- }
+}
