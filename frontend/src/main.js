@@ -278,13 +278,6 @@ function initAvatar(vrm) {
 
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
-  
-  // VRM 0.x compatibility
-  if (!vrm.expressionManager && vrm.blendShapeProxy) {
-    vrm.expressionManager = vrm.blendShapeProxy;
-  }
-
-
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
 
@@ -455,7 +448,7 @@ async function speakAndType(text, agentDiv) {
     }
 
     // ✅ Always declare visemes here
-    const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
+    const visemes = (body.visemes || []).slice().sort((a, b) => a.timeMs - b.timeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
 
     // Log raw objects so we can see actual property names
@@ -493,7 +486,7 @@ const mapViseme = v => {
   const mapped = expressionMap[name] ?? name;
   currentVisemeName = mapped;
   currentVisemeWeight = 1.0;
-  return { t: v.TimeMs / 1000, values: { [name]: 1 } };
+  return { t: v.timeMs / 1000, values: { [name]: 1 } };
 };
 
 
@@ -511,7 +504,7 @@ const mapViseme = v => {
           const mappedKey = mapViseme(v);
           if (mappedKey) {
             const name = Object.keys(mappedKey.values)[0];
-            setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
+            setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.timeMs);
           }
         });
       }
