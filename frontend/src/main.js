@@ -55,74 +55,43 @@ let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
-// Mobile detection
-function isMobile() {
-  return /Mobi|Android/i.test(navigator.userAgent);
-}
-
-// Load skybox with timeout/retry and mobile fallback to PNG
-async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await Promise.race([
-        loadGLBSkybox(url, scene, camera, { desiredRadius: camera.far * 0.9, setSceneBackground: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
-      ]);
-    } catch (err) {
-      console.warn(`[Skybox] Attempt ${attempt} failed:`, err);
-      if (attempt === retries) throw err;
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Backoff
-    }
-  }
-}
-
+// Load skybox
 (async () => {
   try {
-    if (isMobile()) {
-      // Mobile fallback: PNG equirectangular (upload to Blob/CDN if needed; direct path here)
-      console.log('[Skybox] Using mobile PNG fallback');
-      const loader = new THREE.TextureLoader();
-      const texture = await loader.loadAsync('/skybox/background1.png');
-      texture.mapping = THREE.EquirectangularReflectionMapping;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.flipY = false;
-      scene.background = texture;
-      scene.environment = texture; // For PBR if needed
-    } else {
-      // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
-      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
-      const sb = await loadSkyboxWithRetry(skyboxUrl);
-      if (sb) {
-        const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
-        sb.traverse(child => {
-          if (child.isMesh) {
-            const tex = child.material.map || child.material.emissiveMap;
-            if (tex) {
-              tex.mapping = THREE.EquirectangularReflectionMapping;
-              tex.colorSpace = THREE.SRGBColorSpace;
-              tex.flipY = false;
-              tex.generateMipmaps = true;
-              tex.minFilter = THREE.LinearMipmapLinearFilter;
-              tex.magFilter = THREE.LinearFilter;
-              tex.anisotropy = maxAniso;
-              scene.background = tex;
-            }
-            child.material = new THREE.MeshBasicMaterial({
-              map: tex,
-              side: THREE.BackSide,
-              toneMapped: false
-            });
+    const sb = await loadGLBSkybox(
+      'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D',
+      scene,
+      camera,
+      { desiredRadius: camera.far * 0.9, setSceneBackground: true }
+    );
+    if (sb) {
+      const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
+      sb.traverse(child => {
+        if (child.isMesh) {
+          const tex = child.material.map || child.material.emissiveMap;
+          if (tex) {
+            tex.mapping = THREE.EquirectangularReflectionMapping;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.flipY = false;
+            tex.generateMipmaps = true;
+            tex.minFilter = THREE.LinearMipmapLinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.anisotropy = maxAniso;
+            scene.background = tex;
           }
-        });
-        sb.rotation.y = Math.PI;
-        sb.scale.setScalar(camera.far * 0.9);
-        skyGroup.add(sb);
-      }
+          child.material = new THREE.MeshBasicMaterial({
+            map: tex,
+            side: THREE.BackSide,
+            toneMapped: false
+          });
+        }
+      });
+      sb.rotation.y = Math.PI;
+      sb.scale.setScalar(camera.far * 0.9);
+      skyGroup.add(sb);
     }
   } catch (err) {
     console.error('Skybox load failed:', err);
-    // Fallback solid color (black to avoid blue)
-    renderer.setClearColor(0x000000, 1);
   }
 })();
 
@@ -154,7 +123,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return !!blendfaces; // Removed toggle; assume always on
+  return !!blendfaces; // Use Blendfaces by default since toggle removed
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -308,11 +277,14 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   console.log('[VRM] Loaded successfully');
   console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
   const mgr = vrm.expressionManager || vrm.blendShapeProxy;
-  if (mgr) console.log('[VRM] Expressions:', mgr.getExpressionNames());
+  if (mgr) {
+    // Fallback for getExpressionNames not supported (e.g., VRM0)
+    const expressions = mgr.getBlendShapeNames ? mgr.getBlendShapeNames() : [];
+    console.log('[VRM] Expressions:', expressions);
+  }
 });
 
 /* Viseme ID map from backend */
-// Backend → VRM viseme aliasing
 const visemeMap = {
   1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
   6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
@@ -336,38 +308,18 @@ function resolveMouth(name) {
   for (const c of candidates) {
     if (available.has(c)) return c;
   }
-  // Last‑chance fallbacks if your map doesn’t list vowels explicitly
+  // Last-chance fallbacks if your map doesn’t list vowels explicitly
   const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
   if (fallback && available.has(fallback)) return fallback;
-  // If still nothing, return null so we don’t spam set calls that do nothing
-  console.warn('[Viseme] No matching expression for', name, 'in expressionMap keys:', [...available]);
-  return null;
-}
-
-/* 🔹 Mouth masking helpers: ensure expressions never override viseme mouth while speaking */
-const mouthAliasList = [
-  ...vowelAliases.aa, ...vowelAliases.ee, ...vowelAliases.ih, ...vowelAliases.oh, ...vowelAliases.ou,
-  'aa', 'ee', 'ih', 'oh', 'ou', 'A', 'E', 'I', 'O', 'U'
-];
-const mouthSet = new Set(mouthAliasList);
-
-/* 🔹 Mouth masking helpers: ensure expressions never override viseme mouth while speaking */
-function maskMouthShapesWhileSpeaking(mgr) {
-  if (!isSpeaking) return;
-  for (const key of Object.keys(expressionMap || {})) {
-    if (mouthSet.has(key)) {
-      const mapped = expressionMap[key] ?? key; // map to VRM expression
-      mgr.setValue(mapped, 0.0);
-    }
-  }
+  // Default to neutral if no match, ensuring some movement
+  console.warn('[Viseme] No exact match for', name, 'using neutral as fallback, available:', [...available]);
+  return 'neutral';
 }
 
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
-
-// Track last viseme (mapped to VRM expression name)
 let currentVisemeName = null;
 let currentVisemeWeight = 0;
 
@@ -439,11 +391,8 @@ async function speakAndType(text, agentDiv) {
             if (!src) return null;
             const name = resolveMouth(src);
             if (!name) return null;
-            const mapped = expressionMap[name] ?? name; // map to VRM expression
-            currentVisemeName = mapped;
-            currentVisemeWeight = 1.0;
-            console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-            return { t: v.TimeMs / 1000, values: { [name]: 1 } }; // blendfaces uses alias
+            console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
+            return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
           .filter(Boolean);
         if (keys.length) {
@@ -458,32 +407,28 @@ async function speakAndType(text, agentDiv) {
           if (!src) return;
           const name = resolveMouth(src);
           if (!name) return;
-          const mapped = expressionMap[name] ?? name; // map to VRM expression
-          currentVisemeName = mapped;
-          currentVisemeWeight = 1.0;
-          console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-          setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
+          console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
+          setTimeout(() => {
+            setExpressionPersistent(name, 1, DECAY_VISEME);
+            currentVisemeName = name; // Track last viseme
+            currentVisemeWeight = 1;  // Track last weight
+          }, v.TimeMs);
         });
       }
     }, { once: true });
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
-      currentVisemeName = null;
+      currentVisemeName = null; // Reset on end
       currentVisemeWeight = 0;
-      const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-      if (mgr) {
-        for (const key of mouthSet) {
-          const mapped = expressionMap[key] ?? key;
-          if ((expressionMap || {})[key] !== undefined) mgr.setValue(mapped, 0.0);
-        }
-      }
     });
 
     audio.play().catch(err => {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
       isSpeaking = false;
+      currentVisemeName = null;
+      currentVisemeWeight = 0;
     });
 
   } catch (err) {
@@ -494,11 +439,117 @@ async function speakAndType(text, agentDiv) {
     }
     updateChatEntry(agentDiv, 'agent', text);
     isSpeaking = false;
+    currentVisemeName = null;
+    currentVisemeWeight = 0;
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
   }
 }
+
+/* === Chat + TTS (type as speaking) === */
+function addChatEntry(role, text) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'chat-entry';
+  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text || ''}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+function updateChatEntry(div, role, text) {
+  if (!div) return;
+  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
+}
+
+function typeOut(el, role, text, durationMs) {
+  const start = performance.now();
+  const total = text.length;
+  const label = `<span class="chat-${role}">${role}:</span> `;
+  const spanId = `typing-${Math.random().toString(36).slice(2)}`;
+  el.innerHTML = `${label}<span id="${spanId}"></span>`;
+  const span = el.querySelector(`#${spanId}`);
+  function frame(now) {
+    const elapsed = now - start;
+    const t = Math.min(1, durationMs > 0 ? elapsed / durationMs : 1);
+    const count = Math.floor(total * t);
+    span.textContent = text.slice(0, count);
+    if (count < total) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+async function sendToAgent() {
+  const inputEl = document.getElementById('agentInput');
+  const msg = inputEl.value.trim();
+  if (!msg) {
+    addChatEntry('agent', '[Please enter a message]');
+    return;
+  }
+  addChatEntry('user', msg);
+  inputEl.value = '';
+
+  try {
+    const chatRes = await fetch(`${backendBase}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: msg })
+    });
+    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
+    const body = isJson
+      ? await chatRes.json().catch(() => null)
+      : await chatRes.text().catch(() => '');
+    if (!chatRes.ok) {
+      console.error('[Chat Error]', chatRes.status, body);
+      addChatEntry('agent', '[Error contacting Agent]');
+      return;
+    }
+
+    const reply = (body?.text ?? body?.reply ?? body?.message ?? '')
+      .toString().trim();
+    if (!reply) {
+      addChatEntry('agent', '[No response]');
+      return;
+    }
+
+    const agentDiv = addChatEntry('agent', '');
+    await speakAndType(reply, agentDiv);
+  } catch (err) {
+    console.error('[Agent Error]', err);
+    addChatEntry('agent', '[Error contacting Agent]');
+  }
+}
+
+/* === Mic button === */
+function initMicButton() {
+  const micBtn = document.getElementById('micBtn');
+  if (!('webkitSpeechRecognition' in window)) {
+    micBtn.disabled = true;
+    micBtn.title = 'Speech recognition not supported';
+    return;
+  }
+  micBtn.addEventListener('click', () => {
+    const recog = new webkitSpeechRecognition();
+    recog.lang = 'en-US';
+    recog.interimResults = false;
+    recog.maxAlternatives = 1;
+
+    recog.onresult = e => {
+      document.getElementById('agentInput').value = e.results[0][0].transcript;
+      sendToAgent();
+    };
+    recog.onerror = e => addChatEntry('agent', `[Mic error: ${e.error}]`);
+    recog.start();
+  });
+}
+
+/* === UI wiring === */
+function initUI() {
+  document.getElementById('agentSendBtn').addEventListener('click', sendToAgent);
+  initMicButton();
+}
+initUI();
 
 /* === Animation loop === */
 function animate() {
@@ -511,11 +562,13 @@ function animate() {
 
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
 
+    // Default neutral "happy" expression (ambient idle)
     if (!isSpeaking && Object.keys(activeExpr).length === 0) {
       mgr.setValue('happy', 1.0);
       mgr.setValue('neutral', 0.0);
     }
 
+    // Spine sway
     const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
     if (spine) {
       spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
@@ -529,17 +582,19 @@ function animate() {
       }
     }
 
+    // Expressions/visemes
     applyExpressions(dt);
 
-    if (isSpeaking && mgr) {
-      maskMouthShapesWhileSpeaking(mgr);
-      if (currentVisemeName) {
-        mgr.setValue(currentVisemeName, currentVisemeWeight);
-      }
+    // Re-apply last viseme during speech to prevent neutral flicker
+    if (isSpeaking && mgr && currentVisemeName) {
+      mgr.setValue(currentVisemeName, currentVisemeWeight);
+      mgr.update();
+      console.log('[Viseme] Re-applying', currentVisemeName, 'with weight', currentVisemeWeight);
     }
 
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
+    // Ambient: breathe → gaze → blink
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
