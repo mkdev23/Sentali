@@ -340,14 +340,22 @@ let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
 
+// Map backend viseme names to VRM vowel shapes if needed
+const vrmMouthAlias = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' };
+
+function resolveMouth(name) {
+  return vrmMouthAlias[name] || name;
+}
+
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] Request in-flight; aborting previous and starting new');
     ttsAbortController?.abort();
-    updateChatEntry(agentDiv, 'agent', text); // Fallback to text if aborted
+    updateChatEntry(agentDiv, 'agent', text);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
+
   try {
     const clean = sanitizeForTTS(text);
     const fetchPromise = fetch(`${backendBase}/api/tts`, {
@@ -357,7 +365,6 @@ async function speakAndType(text, agentDiv) {
       signal: ttsAbortController.signal
     });
 
-    // Timeout after 60s
     const res = await Promise.race([
       fetchPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error('TTS request timeout')), 60000))
@@ -368,42 +375,50 @@ async function speakAndType(text, agentDiv) {
       updateChatEntry(agentDiv, 'agent', text);
       return;
     }
+
     const body = await res.json().catch(() => null);
     console.log('[TTS] Response body:', body);
+
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl in response', body);
       updateChatEntry(agentDiv, 'agent', text);
       return;
     }
 
+    const visemes = body.visemes || [];
+    console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
+
+    const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+    if (mgr) console.log('[VRM] Expressions available:', mgr.getExpressionNames());
+
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
     audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
     audio.addEventListener('canplaythrough', () => console.log('[TTS] Ready to play'), { once: true });
 
-    const metadataPromise = new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       audio.addEventListener('loadedmetadata', resolve, { once: true });
       audio.addEventListener('error', reject, { once: true });
-    });
-    await metadataPromise.catch(err => console.warn('[TTS] Metadata load failed:', err));
+    }).catch(err => console.warn('[TTS] Metadata load failed:', err));
 
     const durationMs = (audio.duration > 0)
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    const visemes = body.visemes || [];
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
     audio.addEventListener('play', () => {
-      isSpeaking = true; // 🔹 start of speech
+      isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
 
       if (shouldUseBlendfaces() && blendfaces) {
         const keys = visemes
           .map(v => {
-            const name = visemeMap[v.VisemeId];
-            if (!name) return null;
+            const src = visemeMap[v.VisemeId];
+            if (!src) return null;
+            const name = resolveMouth(src);
+            console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
             return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
           .filter(Boolean);
@@ -411,8 +426,10 @@ async function speakAndType(text, agentDiv) {
         blendfaces.playTimeline(0, audio);
       } else {
         visemes.forEach(v => {
-          const name = visemeMap[v.VisemeId];
-          if (name) {
+          const src = visemeMap[v.VisemeId];
+          if (src) {
+            const name = resolveMouth(src);
+            console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
             setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
           }
         });
@@ -420,7 +437,7 @@ async function speakAndType(text, agentDiv) {
     }, { once: true });
 
     audio.addEventListener('ended', () => {
-      isSpeaking = false; // 🔹 end of speech
+      isSpeaking = false;
     });
 
     audio.play().catch(err => {
@@ -428,6 +445,7 @@ async function speakAndType(text, agentDiv) {
       typeOut(agentDiv, 'agent', text, durationMs);
       isSpeaking = false;
     });
+
   } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS request timeout') {
       console.error('[TTS] Error:', err);
