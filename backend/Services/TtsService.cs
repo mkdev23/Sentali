@@ -7,7 +7,6 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
-using Microsoft.Extensions.Configuration;
 
 namespace SentaliApp.Services
 {
@@ -15,10 +14,9 @@ namespace SentaliApp.Services
     {
         private readonly SpeechConfig _speechConfig;
 
-        // Old no-arg constructor preserved
+        // Keep no-arg constructor for compatibility
         public TtsService()
         {
-            // If you want to load config here, you can pull from environment variables
             var endpointUrl = Environment.GetEnvironmentVariable("SPEECH_ENDPOINT")?.Trim()
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
@@ -53,12 +51,12 @@ namespace SentaliApp.Services
             );
         }
 
-        // Old method name preserved
+        // Old method name preserved for controllers
         public Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeWithVisemeAndLipsync(string text, CancellationToken cancellationToken = default)
             => SynthesizeWithVisemesAsync(text, cancellationToken);
 
-        // New internal method with Option 2 streaming
+        // Main synthesis method
         public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
         {
@@ -66,6 +64,7 @@ namespace SentaliApp.Services
             return await SynthesizeChunkAsync(text, cancellationToken);
         }
 
+        // Single, reliable streaming implementation
         private async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeChunkAsync(string text, CancellationToken cancellationToken)
         {
@@ -83,7 +82,7 @@ namespace SentaliApp.Services
 
             using var ms = new MemoryStream();
 
-            // Start draining audio immediately
+            // Start draining audio immediately in parallel
             var readTask = Task.Run(() =>
             {
                 var buffer = new byte[32000];
@@ -105,7 +104,6 @@ namespace SentaliApp.Services
                     Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
                     throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
                 }
-
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
@@ -117,5 +115,31 @@ namespace SentaliApp.Services
             return (audioBytes, visemes);
         }
 
+        // Optional: keep mapping if you want server-side blendshape names
+        public string? MapVisemeIdToBlendshape(uint id) => id switch
+        {
+            0u => null,
+            1u => "aa",
+            2u => "aa",
+            3u => "ih",
+            4u => "ee",
+            5u => "oh",
+            6u => "ou",
+            7u => "ou",
+            8u => "ee",
+            9u => "ih",
+            10u => "oh",
+            11u => "ou",
+            12u => "aa",
+            13u => "ee",
+            14u => "ih",
+            15u => "oh",
+            16u => "ou",
+            17u => "aa",
+            18u => "ee",
+            19u => "ih",
+            20u => "oh",
+            _ => null
+        };
     }
 }
