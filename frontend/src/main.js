@@ -400,10 +400,13 @@ async function speakAndType(text, agentDiv) {
       return;
     }
 
-    // ✅ Always declare visemes here before using it anywhere
+    // ✅ Always declare visemes here
     const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
-    console.log('[Viseme raw IDs]', visemes.map(v => v.VisemeId));  
+
+    // Log raw objects so we can see actual property names
+    console.log('[Viseme objects]', visemes);
+
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
     audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
@@ -425,23 +428,23 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
 
-      if (shouldUseBlendfaces() && blendfaces) {
-        const keys = visemes
-          .map(v => {
-            const src = visemeMap[v.VisemeId];
-            console.log(`VisemeId ${v.VisemeId} → src:`, src);
-            if (!src) return null;
-            const name = resolveMouth(src);
-            console.log(`resolveMouth(${src}) →`, name);
-            if (!name) return null;
-            const mapped = expressionMap[name] ?? name;
-            currentVisemeName = mapped;
-            currentVisemeWeight = 1.0;
-            console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-            return { t: v.TimeMs / 1000, values: { [name]: 1 } };
-          })
-          .filter(Boolean);
+      const mapViseme = v => {
+        // Try multiple possible property names
+        const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
+        const src = id != null ? visemeMap[id] : (v.name ?? null);
+        console.log(`Raw viseme:`, v, '→ id:', id, '→ src:', src);
+        if (!src) return null;
+        const name = resolveMouth(src);
+        console.log(`resolveMouth(${src}) →`, name);
+        if (!name) return null;
+        const mapped = expressionMap[name] ?? name;
+        currentVisemeName = mapped;
+        currentVisemeWeight = 1.0;
+        return { t: v.TimeMs / 1000, values: { [name]: 1 } };
+      };
 
+      if (shouldUseBlendfaces() && blendfaces) {
+        const keys = visemes.map(mapViseme).filter(Boolean);
         if (keys.length) {
           blendfaces.loadTimeline(keys);
           blendfaces.playTimeline(0, audio);
@@ -450,17 +453,11 @@ async function speakAndType(text, agentDiv) {
         }
       } else {
         visemes.forEach(v => {
-          const src = visemeMap[v.VisemeId];
-          console.log(`VisemeId ${v.VisemeId} → src:`, src);
-          if (!src) return;
-          const name = resolveMouth(src);
-          console.log(`resolveMouth(${src}) →`, name);
-          if (!name) return;
-          const mapped = expressionMap[name] ?? name;
-          currentVisemeName = mapped;
-          currentVisemeWeight = 1.0;
-          console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-          setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
+          const mappedKey = mapViseme(v);
+          if (mappedKey) {
+            const name = Object.keys(mappedKey.values)[0];
+            setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
+          }
         });
       }
     }, { once: true });
@@ -498,7 +495,6 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
-
 
 
 /* === Chat + TTS (type as speaking) === */
