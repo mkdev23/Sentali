@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
-using Microsoft.CognitiveServices.Speech.Audio;
 using Microsoft.Extensions.Configuration;
 
 namespace SentaliApp.Services
@@ -15,14 +14,17 @@ namespace SentaliApp.Services
     {
         private readonly SpeechConfig _speechConfig;
 
-        public TtsService(IConfiguration config)
+        // No-arg constructor for compatibility
+        public TtsService()
         {
-            var endpointUrl = config["SPEECH_ENDPOINT"]?.Trim()
+            var endpointUrl = Environment.GetEnvironmentVariable("SPEECH_ENDPOINT")?.Trim()
                 ?? throw new Exception("Missing SPEECH_ENDPOINT");
             var endpointUri = new Uri(endpointUrl);
 
-            var key = config["AZURE_TTS_KEY"]?.Trim() ?? config["TTS_KEY"]?.Trim();
-            var region = config["AZURE_TTS_REGION"]?.Trim() ?? config["TTS_REGION"]?.Trim();
+            var key = Environment.GetEnvironmentVariable("AZURE_TTS_KEY")?.Trim()
+                      ?? Environment.GetEnvironmentVariable("TTS_KEY")?.Trim();
+            var region = Environment.GetEnvironmentVariable("AZURE_TTS_REGION")?.Trim()
+                         ?? Environment.GetEnvironmentVariable("TTS_REGION")?.Trim();
 
             if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(region))
             {
@@ -40,44 +42,19 @@ namespace SentaliApp.Services
                 _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
-            // Use MP3 directly from Azure Speech
-            /* _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
-
-             // Enable viseme events
-             _speechConfig.SetServiceProperty(
-                 "speech.synthesis.requestViseme",
-                 "true",
-                 ServicePropertyChannel.UriQueryParameter
-             ); */
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-            // For debug, PCM is more reliable for viseme events
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
-
             _speechConfig.SetServiceProperty(
                 "speech.synthesis.requestViseme",
                 "true",
                 ServicePropertyChannel.UriQueryParameter
             );
-
-
-
-            WarmUpAsync().GetAwaiter().GetResult();
         }
 
-        private async Task WarmUpAsync()
-        {
-            try
-            {
-                Console.WriteLine("[TTS] Warming up with dummy synthesis");
-                await SynthesizeWithVisemesAsync("Warm-up test", new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
-                Console.WriteLine("[TTS] Warm-up complete");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("[TTS] Warm-up failed: " + ex.Message);
-            }
-        }
+        // Old method name preserved
+        public Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
+            SynthesizeWithVisemeAndLipsync(string text, CancellationToken cancellationToken = default)
+            => SynthesizeWithVisemesAsync(text, cancellationToken);
 
         public async Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeWithVisemesAsync(string text, CancellationToken cancellationToken = default)
@@ -91,10 +68,8 @@ namespace SentaliApp.Services
         {
             var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
-            // Create a pull stream to capture audio and trigger events
-            using var stream = AudioOutputStream.CreatePullStream();
-            using var audioConfig = AudioConfig.FromStreamOutput(stream);
-            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
+            // This was the working setup: audioConfig: null
+            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig: null);
 
             synthesizer.VisemeReceived += (_, e) =>
             {
@@ -111,30 +86,12 @@ namespace SentaliApp.Services
                     var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
                     Console.WriteLine($"[TTS] Canceled: Reason={cancellation.Reason}");
                     Console.WriteLine($"[TTS] ErrorDetails={cancellation.ErrorDetails}");
-
-                    if (cancellation.ErrorDetails?.Contains("Voice", StringComparison.OrdinalIgnoreCase) == true)
-                    {
-                        Console.WriteLine("[TTS] Falling back to en-US-JennyNeural");
-                        _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-                        return await SynthesizeChunkAsync(text, cancellationToken);
-                    }
-
                     throw new Exception($"TTS failed: {cancellation.Reason} - {cancellation.ErrorDetails}");
                 }
-
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
-            // Read audio bytes from the pull stream
-            using var ms = new MemoryStream();
-            var buffer = new byte[32000];
-            uint bytesRead;
-            while ((bytesRead = stream.Read(buffer)) > 0)
-            {
-                ms.Write(buffer, 0, (int)bytesRead);
-            }
-
-            var audioBytes = ms.ToArray();
+            var audioBytes = result.AudioData ?? Array.Empty<byte>();
             Console.WriteLine($"[TTS] Done: audio={audioBytes.Length}B, visemes={visemes.Count}");
 
             return (audioBytes, visemes);
