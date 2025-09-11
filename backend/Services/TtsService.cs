@@ -117,30 +117,5 @@ namespace SentaliApp.Services
             return (audioBytes, visemes);
         }
 
-        public string? MapVisemeIdToBlendshape(uint id) => id switch
-        {
-            0u => null,
-            1u => "aa",
-            2u => "aa",
-            3u => "ih",
-            4u => "ee",
-            5u => "oh",
-            6u => "ou",
-            7u => "ou",
-            8u => "ee",
-            9u => "ih",
-            10u => "oh",
-            11u => "ou",
-            12u => "aa",
-            13u => "ee",
-            14u => "ih",
-            15u => "oh",
-            16u => "ou",
-            17u => "aa",
-            18u => "ee",
-            19u => "ih",
-            20u => "oh",
-            _ => null
-        };
     }
 }
