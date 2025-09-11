@@ -439,7 +439,7 @@ async function speakAndType(text, agentDiv) {
             if (!src) return null;
             const name = resolveMouth(src);
             if (!name) return null;
-            // 🔹 Track current viseme
+            // 🔹 Track current viseme for animate()
             currentVisemeName = name;
             currentVisemeWeight = 1.0;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
@@ -458,7 +458,7 @@ async function speakAndType(text, agentDiv) {
           if (!src) return;
           const name = resolveMouth(src);
           if (!name) return;
-          // 🔹 Track current viseme
+          // 🔹 Track current viseme for animate()
           currentVisemeName = name;
           currentVisemeWeight = 1.0;
           console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
@@ -499,6 +499,7 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
+
 
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
@@ -660,7 +661,7 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
-animate();     
+animate();
 
 /* === Window resize handler === */
 window.addEventListener('resize', () => {
