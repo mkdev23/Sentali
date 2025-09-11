@@ -85,10 +85,10 @@ namespace SentaliApp.Services
 
       synthesizer.VisemeReceived += (_, e) => visemes.Add(((uint)e.VisemeId, (long)e.AudioOffset));
 
-      Console.WriteLine("[TTS] Calling SpeakTextAsync");
+      
       var resultTask = synthesizer.SpeakTextAsync(text);
       var result = await resultTask.WaitAsync(cancellationToken);
-      Console.writeLine("[TTS] SpeakTextAsync completed");
+    
 
       if (result.Reason != ResultReason.SynthesizingAudioCompleted)
       {
