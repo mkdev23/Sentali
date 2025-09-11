@@ -88,7 +88,7 @@ namespace SentaliApp.Services
       Console.WriteLine("[TTS] Calling SpeakTextAsync");
       var resultTask = synthesizer.SpeakTextAsync(text);
       var result = await resultTask.WaitAsync(cancellationToken);
-      Console.WriteLine("[TTS] SpeakTextAsync completed");
+      Console.writeLine("[TTS] SpeakTextAsync completed");
 
       if (result.Reason != ResultReason.SynthesizingAudioCompleted)
       {
