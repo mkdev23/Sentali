@@ -400,6 +400,7 @@ async function speakAndType(text, agentDiv) {
       return;
     }
 
+    // ✅ Always declare visemes here before using it anywhere
     const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
 
@@ -417,7 +418,6 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    // Keep expression (eyes/brows/etc.), mouth will be masked while speaking
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
@@ -434,27 +434,28 @@ async function speakAndType(text, agentDiv) {
             const name = resolveMouth(src);
             console.log(`resolveMouth(${src}) →`, name);
             if (!name) return null;
-            // Map to actual VRM expression name for re-apply in animate()
             const mapped = expressionMap[name] ?? name;
             currentVisemeName = mapped;
             currentVisemeWeight = 1.0;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-            return { t: v.TimeMs / 1000, values: { [name]: 1 } }; // blendfaces consumes alias keys
+            return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
           .filter(Boolean);
+
         if (keys.length) {
           blendfaces.loadTimeline(keys);
           blendfaces.playTimeline(0, audio);
         } else {
-          console.warn('[Viseme] No keys generated for timeline');
+          console.warn('[Viseme] No keys generated for timeline — check mapping above');
         }
       } else {
         visemes.forEach(v => {
           const src = visemeMap[v.VisemeId];
+          console.log(`VisemeId ${v.VisemeId} → src:`, src);
           if (!src) return;
           const name = resolveMouth(src);
+          console.log(`resolveMouth(${src}) →`, name);
           if (!name) return;
-          // Map to actual VRM expression name for re-apply in animate()
           const mapped = expressionMap[name] ?? name;
           currentVisemeName = mapped;
           currentVisemeWeight = 1.0;
@@ -468,10 +469,8 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = false;
       currentVisemeName = null;
       currentVisemeWeight = 0;
-      // Optional: clear any residual mouth weights the frame speech ends
       const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-      console.log('[VRM] Available expressions:', mgr.getExpressionNames?.());
-
+      console.log('[VRM] Available expressions:', mgr?.getExpressionNames?.());
       if (mgr) {
         for (const key of mouthSet) {
           const mapped = expressionMap[key] ?? key;
@@ -499,6 +498,8 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
+
+
 
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
