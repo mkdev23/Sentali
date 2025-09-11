@@ -306,11 +306,14 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 /* Viseme ID map from backend */
 // Backend → VRM viseme aliasing
 const visemeMap = {
-  1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
-  6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
+  0: 'neutral', // closed/neutral mouth
+  1: 'aa',  2: 'aa',  3: 'ih',  4: 'ee',  5: 'oh',
+  6: 'ou',  7: 'ou',  8: 'ee',  9: 'ih', 10: 'oh',
   11: 'ou', 12: 'aa', 13: 'ee', 14: 'ih', 15: 'oh',
-  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh'
+  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh',
+  21: 'neutral' // fallback for unknown ID
 };
+
 
 // Aliases for common VRM/VRM0 vowel presets
 const vowelAliases = {
@@ -325,16 +328,22 @@ const vowelAliases = {
 function resolveMouth(name) {
   const candidates = vowelAliases[name] || [name];
   const available = new Set(Object.keys(expressionMap || {}));
+
   for (const c of candidates) {
     if (available.has(c)) return c;
   }
-  // Last‑chance fallbacks if your map doesn’t list vowels explicitly
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
+
+  // Try a single-letter fallback
+  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U', rest: 'rest' }[name];
   if (fallback && available.has(fallback)) return fallback;
-  // If still nothing, return null so we don’t spam set calls that do nothing
-  console.warn('[Viseme] No matching expression for', name, 'in expressionMap keys:', [...available]);
+
+  // Final fallback to 'happy' if available
+  if (available.has('neutral')) return 'neutral';
+
+  console.warn('[Viseme] No matching expression for', name, '— no rest shape found');
   return null;
 }
+
 
 /* 🔹 Mouth alias list and set */
 const mouthAliasList = [
@@ -428,20 +437,21 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
 
-      const mapViseme = v => {
-        // Try multiple possible property names
-        const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
-        const src = id != null ? visemeMap[id] : (v.name ?? null);
-        console.log(`Raw viseme:`, v, '→ id:', id, '→ src:', src);
-        if (!src) return null;
-        const name = resolveMouth(src);
-        console.log(`resolveMouth(${src}) →`, name);
-        if (!name) return null;
-        const mapped = expressionMap[name] ?? name;
-        currentVisemeName = mapped;
-        currentVisemeWeight = 1.0;
-        return { t: v.TimeMs / 1000, values: { [name]: 1 } };
-      };
+const mapViseme = v => {
+  const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
+  const src = id != null ? visemeMap[id] : (v.name ?? null);
+  console.log(`Raw viseme:`, v, '→ id:', id, '→ src:', src);
+  if (!src) return null;
+  const name = resolveMouth(src);
+  console.log(`resolveMouth(${src}) →`, name);
+  if (!name) return null;
+  const mapped = expressionMap[name] ?? name;
+  currentVisemeName = mapped;
+  currentVisemeWeight = 1.0;
+  return { t: v.TimeMs / 1000, values: { [name]: 1 } };
+};
+
+
 
       if (shouldUseBlendfaces() && blendfaces) {
         const keys = visemes.map(mapViseme).filter(Boolean);
