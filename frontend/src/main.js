@@ -55,74 +55,43 @@ let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
-// Mobile detection
-function isMobile() {
-  return /Mobi|Android/i.test(navigator.userAgent);
-}
-
-// Load skybox with timeout/retry and mobile fallback to PNG
-async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await Promise.race([
-        loadGLBSkybox(url, scene, camera, { desiredRadius: camera.far * 0.9, setSceneBackground: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
-      ]);
-    } catch (err) {
-      console.warn(`[Skybox] Attempt ${attempt} failed:`, err);
-      if (attempt === retries) throw err;
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Backoff
-    }
-  }
-}
-
+// Load skybox
 (async () => {
   try {
-    if (isMobile()) {
-      // Mobile fallback: PNG equirectangular (upload to Blob/CDN if needed; direct path here)
-      console.log('[Skybox] Using mobile PNG fallback');
-      const loader = new THREE.TextureLoader();
-      const texture = await loader.loadAsync('/skybox/background1.png');
-      texture.mapping = THREE.EquirectangularReflectionMapping;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.flipY = false;
-      scene.background = texture;
-      scene.environment = texture; // For PBR if needed
-    } else {
-      // Desktop: Optimized GLB (assume you compressed via gltfpack -i input.glb -o output.glb -cc -tc (lossless mesh, texture compress); upload new URL)
-      const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D'; // Replace with optimized URL
-      const sb = await loadSkyboxWithRetry(skyboxUrl);
-      if (sb) {
-        const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
-        sb.traverse(child => {
-          if (child.isMesh) {
-            const tex = child.material.map || child.material.emissiveMap;
-            if (tex) {
-              tex.mapping = THREE.EquirectangularReflectionMapping;
-              tex.colorSpace = THREE.SRGBColorSpace;
-              tex.flipY = false;
-              tex.generateMipmaps = true;
-              tex.minFilter = THREE.LinearMipmapLinearFilter;
-              tex.magFilter = THREE.LinearFilter;
-              tex.anisotropy = maxAniso;
-              scene.background = tex;
-            }
-            child.material = new THREE.MeshBasicMaterial({
-              map: tex,
-              side: THREE.BackSide,
-              toneMapped: false
-            });
+    const sb = await loadGLBSkybox(
+      'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D',
+      scene,
+      camera,
+      { desiredRadius: camera.far * 0.9, setSceneBackground: true }
+    );
+    if (sb) {
+      const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
+      sb.traverse(child => {
+        if (child.isMesh) {
+          const tex = child.material.map || child.material.emissiveMap;
+          if (tex) {
+            tex.mapping = THREE.EquirectangularReflectionMapping;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.flipY = false;
+            tex.generateMipmaps = true;
+            tex.minFilter = THREE.LinearMipmapLinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.anisotropy = maxAniso;
+            scene.background = tex;
           }
-        });
-        sb.rotation.y = Math.PI;
-        sb.scale.setScalar(camera.far * 0.9);
-        skyGroup.add(sb);
-      }
+          child.material = new THREE.MeshBasicMaterial({
+            map: tex,
+            side: THREE.BackSide,
+            toneMapped: false
+          });
+        }
+      });
+      sb.rotation.y = Math.PI;
+      sb.scale.setScalar(camera.far * 0.9);
+      skyGroup.add(sb);
     }
   } catch (err) {
     console.error('Skybox load failed:', err);
-    // Fallback solid color (black to avoid blue)
-    renderer.setClearColor(0x000000, 1);
   }
 })();
 
@@ -154,7 +123,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return !!blendfaces; // Removed toggle; assume always on
+  return !!blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -344,31 +313,10 @@ function resolveMouth(name) {
   return null;
 }
 
-/* 🔹 Mouth masking helpers: ensure expressions never override viseme mouth while speaking */
-const mouthAliasList = [
-  ...vowelAliases.aa, ...vowelAliases.ee, ...vowelAliases.ih, ...vowelAliases.oh, ...vowelAliases.ou,
-  'aa', 'ee', 'ih', 'oh', 'ou', 'A', 'E', 'I', 'O', 'U'
-];
-const mouthSet = new Set(mouthAliasList);
-
-function maskMouthShapesWhileSpeaking(mgr) {
-  if (!isSpeaking) return;
-  // Zero out any mouth-related blendshapes an expression may have set this frame
-  for (const key of Object.keys(expressionMap || {})) {
-    if (mouthSet.has(key)) {
-      mgr.setValue(key, 0.0);
-    }
-  }
-}
-
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
-
-// 🔹 Track last viseme so we can persist it between events
-let currentVisemeName = null;
-let currentVisemeWeight = 0;
 
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
@@ -424,7 +372,6 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    // Keep expression (eyes/brows/etc.), mouth will be masked while speaking
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
@@ -439,9 +386,6 @@ async function speakAndType(text, agentDiv) {
             if (!src) return null;
             const name = resolveMouth(src);
             if (!name) return null;
-            // 🔹 Track current viseme for animate()
-            currentVisemeName = name;
-            currentVisemeWeight = 1.0;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
             return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
@@ -458,9 +402,6 @@ async function speakAndType(text, agentDiv) {
           if (!src) return;
           const name = resolveMouth(src);
           if (!name) return;
-          // 🔹 Track current viseme for animate()
-          currentVisemeName = name;
-          currentVisemeWeight = 1.0;
           console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
           setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
         });
@@ -469,15 +410,6 @@ async function speakAndType(text, agentDiv) {
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
-      currentVisemeName = null;
-      currentVisemeWeight = 0;
-      // Optional: clear any residual mouth weights the frame speech ends
-      const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-      if (mgr) {
-        for (const key of mouthSet) {
-          if ((expressionMap || {})[key] !== undefined) mgr.setValue(key, 0.0);
-        }
-      }
     });
 
     audio.play().catch(err => {
@@ -499,7 +431,6 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
-
 
 /* === Chat + TTS (type as speaking) === */
 function addChatEntry(role, text) {
@@ -589,7 +520,7 @@ function initMicButton() {
     recog.interimResults = false;
     recog.maxAlternatives= 1;
 
-     recog.onresult = e => {
+    recog.onresult = e => {
       document.getElementById('agentInput').value = e.results[0][0].transcript;
       sendToAgent();
     };
@@ -638,16 +569,6 @@ function animate() {
 
     // 1) expressions/visemes
     applyExpressions(dt);
-
-    // 🔹 Ensure mouth is not overridden by expressions while speaking
-    if (isSpeaking && mgr) {
-      maskMouthShapesWhileSpeaking(mgr);
-      // 🔹 Re‑apply the most recent viseme so it persists between events
-      if (currentVisemeName) {
-        mgr.setValue(currentVisemeName, currentVisemeWeight);
-      }
-    }
-
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
     // 2) ambient: breathe → gaze → blink
