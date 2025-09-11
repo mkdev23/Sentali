@@ -79,23 +79,48 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
   }
 }
 
+// Fade out and remove the loading overlay
+function hideOverlay() {
+  const overlay = document.getElementById('loading-overlay');
+  if (!overlay) return;
+  overlay.style.transition = 'opacity 0.5s ease';
+  overlay.style.opacity = '0';
+  setTimeout(() => overlay.remove(), 500);
+}
+
+// Ensure you only have ONE definition of initAvatar
+function initAvatar(vrm) {
+  let chest = vrm.humanoid.getNormalizedBoneNode('chest');
+  if (!chest) chest = vrm.humanoid.getNormalizedBoneNode('upper_chest');
+  if (!chest) chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
+  if (chest) chestBaseY = chest.position.y;
+  blinkTimer = 2 + Math.random() * 3;
+  gazeTimer = 2 + Math.random() * 2;
+  gazeDirection = 0;
+}
+
+// Wrap both loaders and start them together
 (async () => {
-    function loadSkyboxAsync() {
-  return new Promise(async (resolve) => {
-    try {
-      if (isMobile()) {
-        console.log('[Skybox] Using mobile PNG fallback');
-        const loader = new THREE.TextureLoader();
-        const texture = await loader.loadAsync('/skybox/background1.png');
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.flipY = false;
-        scene.background = texture;
-        scene.environment = texture;
-      } else {
-        const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?...';
-        const sb = await loadSkyboxWithRetry(skyboxUrl);
-        if (sb) {
+  function loadSkyboxAsync() {
+    return new Promise(async (resolve, reject) => {
+      try {
+        if (isMobile()) {
+          console.log('[Skybox] Using mobile PNG fallback');
+          const loader = new THREE.TextureLoader();
+          const texture = await loader.loadAsync('/skybox/background1.png');
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.flipY = false;
+          scene.background = texture;
+          scene.environment = texture;
+          resolve();
+        } else {
+          const skyboxUrl = 'REPLACE_WITH_YOUR_SIGNED_GLB_URL';
+          const sb = await loadSkyboxWithRetry(skyboxUrl);
+          if (!sb) {
+            reject(new Error('Skybox GLB returned null'));
+            return;
+          }
           const maxAniso = renderer.capabilities.getMaxAnisotropy() || 8;
           sb.traverse(child => {
             if (child.isMesh) {
@@ -120,205 +145,64 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
           sb.rotation.y = Math.PI;
           sb.scale.setScalar(camera.far * 0.9);
           skyGroup.add(sb);
+          resolve();
         }
+      } catch (err) {
+        console.error('Skybox load failed:', err);
+        renderer.setClearColor(0x000000, 1);
+        reject(err);
       }
-    } catch (err) {
-      console.error('Skybox load failed:', err);
-      renderer.setClearColor(0x000000, 1);
-    }
-    resolve();
-  });
-}
-
-
-// Expression management
-const activeExpr = {};
-const DECAY_EMO = 3.0;
-const DECAY_VISEME = 10.0;
-const SMOOTH = 0.4;
-
-function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
-  const mapped = expressionMap[name] ?? name;
-  activeExpr[mapped] = { weight, decay };
-}
-
-function applyExpressions(delta) {
-  if (!currentVRM) return;
-  const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-  for (const [m, st] of Object.entries(activeExpr)) {
-    st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
-    if (st.weight < 0.01) {
-      delete activeExpr[m];
-      continue;
-    }
-    const curr = mgr.getValue(m) || 0;
-    const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
-    mgr.setValue(m, blend);
-  }
-  mgr.update();
-}
-
-function shouldUseBlendfaces() {
-  return !!blendfaces;
-}
-
-/* WebSocket for visemes and blendshapes */
-const wsClient = new WSClient({
-  url: `wss://${window.location.host}/ws`,
-  onOpen: () => console.log('WS connected'),
-  onMessage: data => {
-    // Play any audio URL
-    const audioUrl = data.audioUrl || data.audio;
-    if (audioUrl) new Audio(audioUrl).play().catch(e => console.warn('WS audio error', e));
-
-    // Expression cue
-    if (data.expression) {
-      setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
-    }
-
-    // Legacy blendshape payload
-    if (data.type === 'blendshapes' && data.values) {
-      for (const [n, w] of Object.entries(data.values)) {
-        setExpressionPersistent(n, Number(w), DECAY_EMO);
-      }
-    }
-
-    // Single viseme event
-    if (data.type === 'viseme' && data.name) {
-      setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
-    }
-  },
-  onClose: () => console.log('WS disconnected')
-});
-wsClient.connect();
-
-/* Sanitizer for TTS input */
-function sanitizeForTTS(s) {
-  if (!s) return '';
-  // 1) Remove “[No response]”
-  let t = s.split('[No response]').join('').trim();
-  // 2) Strip high-plane code points (emoji)
-  let noEmoji = '';
-  for (const ch of t) {
-    const cp = ch.codePointAt(0);
-    if (cp !== undefined && cp <= 0xFFFF) noEmoji += ch;
-  }
-  // 3) Collapse whitespace
-  let out = '';
-  let inSpace = false;
-  for (const c of noEmoji) {
-    const ws = c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v';
-    if (ws) {
-      if (!inSpace) { out += ' '; inSpace = true; }
-    } else {
-      out += c;
-      inSpace = false;
-    }
-  }
-  return out.trim();
-}
-
-/* Ambient state & behaviours (countdown) */
-let chestBaseY = 0;
-let blinkTimer = 2 + Math.random() * 3;
-let gazeTimer = 2 + Math.random() * 2;
-let gazeDirection = 0;
-
-function handleBlink(delta) {
-  blinkTimer -= delta;
-  if (blinkTimer <= 0) {
-    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-    if (shouldUseBlendfaces()) {
-      blendfaces.set('blink', 1.0, 'live', 150);
-    } else {
-      mgr.setValue('blink', 1.0);
-      mgr.update();
-      setTimeout(() => {
-        mgr.setValue('blink', 0.0);
-        mgr.update();
-      }, 150);
-    }
-    blinkTimer = 2 + Math.random() * 3;
-  }
-}
-
-function handleGaze(delta) {
-  gazeTimer -= delta;
-  if (gazeTimer <= 0) {
-    gazeDirection = (Math.random() - 0.5) * 0.2;
-    gazeTimer = 2 + Math.random() * 2;
-  }
-  let head = currentVRM.humanoid.getNormalizedBoneNode('head');
-  if (!head) {
-    head = vrm.scene.getObjectByName('Head');
-  }
-  if (head) {
-    head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
-  }
-}
-
-function handleBreath(t) {
-  let chest = currentVRM.humanoid.getNormalizedBoneNode('chest');
-  if (!chest) {
-    chest = currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
-  }
-  if (!chest) {
-    chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
-  }
-  if (chest) {
-    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
-  }
-}
-
-/* Load VRM + initialize ambient timers */
-function initAvatar(vrm) {
-  let chest = vrm.humanoid.getNormalizedBoneNode('chest');
-  if (!chest) chest = vrm.humanoid.getNormalizedBoneNode('upper_chest');
-  if (!chest) chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
-  if (chest) chestBaseY = chest.position.y;
-  blinkTimer = 2 + Math.random() * 3;
-  gazeTimer = 2 + Math.random() * 2;
-  gazeDirection = 0;
-}
-
-// Wrap VRM load in a Promise
-function loadAvatarAsync() {
-  return new Promise((resolve) => {
-    loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
-      currentVRM = vrm;
-      vrmGroup.add(vrm.scene);
-      vrm.scene.rotation.y = Math.PI;
-      controls.target.set(0, 1.6, 0);
-      controls.update();
-      initAvatar(vrm);
-      resolve();
     });
-  });
-}
-// Start both loads
-Promise.all([loadSkyboxAsync(), loadAvatarAsync()]).then(() => {
-  const overlay = document.getElementById('loading-overlay');
-  overlay.style.transition = 'opacity 0.5s ease';
-  overlay.style.opacity = '0';
-  setTimeout(() => overlay.remove(), 500);
-});
-
-
-
-  blendfaces = new BlendfacesController(vrm, {
-    expressionMap,
-    smooth: 0.3,
-    decay: 1.5,
-    rest: { blink: 0.0, neutral: 1.0 }
-  });
-  blendfaces.attachWS(cb => blendfacesWSHandler = cb);
-  console.log('[VRM] Loaded successfully');
-  console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
-  const mgr = vrm.expressionManager || vrm.blendShapeProxy;
-  if (mgr?.getExpressionNames) {
-    console.log('[VRM] Expressions available in manager:', mgr.getExpressionNames());
   }
-});
+
+  function loadAvatarAsync() {
+    return new Promise((resolve, reject) => {
+      loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
+        try {
+          currentVRM = vrm;
+          vrmGroup.add(vrm.scene);
+          vrm.scene.rotation.y = Math.PI;
+
+          controls.target.set(0, 1.6, 0);
+          controls.update();
+
+          initAvatar(vrm);
+
+          // Initialize blendfaces INSIDE the VRM callback
+          blendfaces = new BlendfacesController(vrm, {
+            expressionMap,
+            smooth: 0.3,
+            decay: 1.5,
+            rest: { blink: 0.0, neutral: 1.0 }
+          });
+          blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
+          console.log('[VRM] Loaded successfully');
+          console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
+          const mgr = vrm.expressionManager || vrm.blendShapeProxy;
+          if (mgr?.getExpressionNames) {
+            console.log('[VRM] Expressions available in manager:', mgr.getExpressionNames());
+          }
+
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+  }
+
+  // Start both loads and hide overlay when done (or on failure, still hide after logging)
+  Promise.all([loadSkyboxAsync(), loadAvatarAsync()])
+    .then(() => {
+      console.log('[Loader] Skybox and Avatar ready');
+      hideOverlay();
+    })
+    .catch(err => {
+      console.error('[Loader] One of the loaders failed:', err);
+      // Optional: keep overlay, or still hide after a delay to avoid indefinite block
+      hideOverlay();
+    });
+})();
 
 console.log('[Viseme raw IDs]', visemes.map(v => v.VisemeId));
 
@@ -419,6 +303,7 @@ async function speakAndType(text, agentDiv) {
       return;
     }
 
+    // ✅ Declare visemes before using it
     const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
 
@@ -436,7 +321,6 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    // Keep expression (eyes/brows/etc.), mouth will be masked while speaking
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
@@ -448,17 +332,14 @@ async function speakAndType(text, agentDiv) {
         const keys = visemes
           .map(v => {
             const src = visemeMap[v.VisemeId];
-            console.log(`VisemeId ${v.VisemeId} → src:`, src);
             if (!src) return null;
             const name = resolveMouth(src);
-            console.log(`resolveMouth(${src}) →`, name);
             if (!name) return null;
-            // Map to actual VRM expression name for re-apply in animate()
             const mapped = expressionMap[name] ?? name;
             currentVisemeName = mapped;
             currentVisemeWeight = 1.0;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} → ${mapped} at ${v.TimeMs}ms`);
-            return { t: v.TimeMs / 1000, values: { [name]: 1 } }; // blendfaces consumes alias keys
+            return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
           .filter(Boolean);
         if (keys.length) {
@@ -473,7 +354,6 @@ async function speakAndType(text, agentDiv) {
           if (!src) return;
           const name = resolveMouth(src);
           if (!name) return;
-          // Map to actual VRM expression name for re-apply in animate()
           const mapped = expressionMap[name] ?? name;
           currentVisemeName = mapped;
           currentVisemeWeight = 1.0;
@@ -487,9 +367,7 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = false;
       currentVisemeName = null;
       currentVisemeWeight = 0;
-      // Optional: clear any residual mouth weights the frame speech ends
       const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-      console.log('[VRM] Available expressions:', mgr.getExpressionNames?.());
       if (mgr) {
         for (const key of mouthSet) {
           const mapped = expressionMap[key] ?? key;
