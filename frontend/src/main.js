@@ -115,7 +115,7 @@ function initAvatar(vrm) {
           scene.environment = texture;
           resolve();
         } else {
-          const skyboxUrl = 'REPLACE_WITH_YOUR_SIGNED_GLB_URL';
+          const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D';
           const sb = await loadSkyboxWithRetry(skyboxUrl);
           if (!sb) {
             reject(new Error('Skybox GLB returned null'));
