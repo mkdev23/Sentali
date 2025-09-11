@@ -301,7 +301,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   }
 });
 
-console.log('[Viseme raw IDs]', visemes.map(v => v.VisemeId));
+
 
 /* Viseme ID map from backend */
 // Backend → VRM viseme aliasing
@@ -403,7 +403,7 @@ async function speakAndType(text, agentDiv) {
     // ✅ Always declare visemes here before using it anywhere
     const visemes = (body.visemes || []).slice().sort((a, b) => a.TimeMs - b.TimeMs);
     console.log(`[TTS] Viseme count: ${visemes.length}`, visemes);
-
+    console.log('[Viseme raw IDs]', visemes.map(v => v.VisemeId));  
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
     audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
