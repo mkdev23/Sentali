@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <title>Sentali Test</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Preload skybox GLB for faster load (replace with your optimized URL) -->
+  <link rel="preload" as="fetch" href="https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox_optimized.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D" crossorigin="anonymous">
   <style>
     html, body, #c {
       width: 100%;
@@ -84,12 +86,16 @@
       color: white;
     }
   </style>
- <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </head>
 <body>
-  <!-- Top-left controls (removed blendfaces toggle) -->
+  <!-- Top-left controls -->
   <div id="control-panel">
     <button id="unlockAudio">Enable Audio</button>
+    <label>
+      <input type="checkbox" id="blendfacesToggle" unchecked />
+      Use Blendfaces
+    </label>
   </div>
 
   <!-- Chat log -->
@@ -111,4 +117,4 @@
 
 
 
- 
+  <script type="module" src="/src/main.js"></script>
