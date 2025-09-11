@@ -36,6 +36,9 @@ builder.Services.AddCors(opts =>
          .AllowCredentials());
 });
 
+
+
+
 // 4) WebSocket hub
 builder.Services.AddSingleton<WsHub>();
 
@@ -75,8 +78,9 @@ app.UseWebSockets();
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
-    app.UseCors("AllowFrontendDev");
+
 }
+    app.UseCors("AllowFrontendDev");
 
 // 9) Static file MIME mapping
 var provider = new FileExtensionContentTypeProvider();
