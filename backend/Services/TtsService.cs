@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
+using Microsoft.CognitiveServices.Speech.Audio;
 using Microsoft.Extensions.Configuration;
 
 namespace SentaliApp.Services
@@ -40,15 +41,15 @@ namespace SentaliApp.Services
             }
 
             // Use MP3 directly from Azure Speech
-           /* _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
-            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
+            /* _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
 
-            // Enable viseme events
-            _speechConfig.SetServiceProperty(
-                "speech.synthesis.requestViseme",
-                "true",
-                ServicePropertyChannel.UriQueryParameter
-            ); */
+             // Enable viseme events
+             _speechConfig.SetServiceProperty(
+                 "speech.synthesis.requestViseme",
+                 "true",
+                 ServicePropertyChannel.UriQueryParameter
+             ); */
             _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
             // For debug, PCM is more reliable for viseme events
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
@@ -90,7 +91,11 @@ namespace SentaliApp.Services
         {
             var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
-            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig: null);
+            // Create a pull stream to capture audio and trigger events
+            using var stream = AudioOutputStream.CreatePullStream();
+            using var audioConfig = AudioConfig.FromStreamOutput(stream);
+            using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig);
+
             synthesizer.VisemeReceived += (_, e) =>
             {
                 Console.WriteLine($"[TTS] Viseme {e.VisemeId} at {e.AudioOffset} ticks");
@@ -120,41 +125,20 @@ namespace SentaliApp.Services
                 throw new Exception($"TTS failed: {result.Reason}");
             }
 
-            var mp3Bytes = result.AudioData;
-            if (mp3Bytes == null || mp3Bytes.Length == 0)
+            // Read audio bytes from the pull stream
+            using var ms = new MemoryStream();
+            var buffer = new byte[32000];
+            uint bytesRead;
+            while ((bytesRead = stream.Read(buffer)) > 0)
             {
-                Console.WriteLine("[TTS] WARNING: Synth returned 0 bytes — retrying once...");
-                return await SynthesizeChunkAsync(text, cancellationToken);
+                ms.Write(buffer, 0, (int)bytesRead);
             }
 
-            Console.WriteLine($"[TTS] Done: audio={mp3Bytes.Length}B, visemes={visemes.Count}");
-            return (mp3Bytes, visemes);
+            var audioBytes = ms.ToArray();
+            Console.WriteLine($"[TTS] Done: audio={audioBytes.Length}B, visemes={visemes.Count}");
+
+            return (audioBytes, visemes);
         }
 
-        public string? MapVisemeIdToBlendshape(uint id) => id switch
-        {
-            0u => null,
-            1u => "aa",
-            2u => "aa",
-            3u => "ih",
-            4u => "ee",
-            5u => "oh",
-            6u => "ou",
-            7u => "ou",
-            8u => "ee",
-            9u => "ih",
-            10u => "oh",
-            11u => "ou",
-            12u => "aa",
-            13u => "ee",
-            14u => "ih",
-            15u => "oh",
-            16u => "ou",
-            17u => "aa",
-            18u => "ee",
-            19u => "ih",
-            20u => "oh",
-            _ => null
-        };
     }
 }
