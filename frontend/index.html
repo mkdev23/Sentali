@@ -85,14 +85,40 @@
       background: #222;
       color: white;
     }
+
+    #loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: black;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+#loading-video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+}
+
+
   </style>
   <script type="module" src="/src/main.js"></script>
 </head>
 <body>
+  <!-- Loading overlay -->
+<div id="loading-overlay">
+  <video id="loading-video" autoplay muted loop playsinline>
+    <source src="/Assets/Video/Loading.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
+</div>
   <!-- Top-left controls -->
   <div id="control-panel">
     <button id="unlockAudio">Enable Audio</button>
   </div>
+
 
   <!-- Chat log -->
   <div id="chat-log"></div>
