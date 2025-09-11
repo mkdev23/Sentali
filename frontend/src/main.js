@@ -301,6 +301,44 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   }
 });
 
+function testMouthShapes() {
+  const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+  if (!mgr) {
+    console.warn('[Test] No expression manager found');
+    return;
+  }
+
+  const shapesToTest = ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'];
+
+  let i = 0;
+  function nextShape() {
+    // Clear all shapes first
+    for (const key of shapesToTest) {
+      const mapped = expressionMap[key] ?? key;
+      mgr.setValue(mapped, 0.0);
+    }
+
+    if (i >= shapesToTest.length) {
+      console.log('[Test] Mouth shape test complete');
+      return;
+    }
+
+    const shape = shapesToTest[i];
+    const mapped = expressionMap[shape] ?? shape;
+    console.log(`[Test] Setting ${shape} (${mapped}) to 1.0`);
+    mgr.setValue(mapped, 1.0);
+    mgr.update();
+
+    i++;
+    setTimeout(nextShape, 1000); // hold each shape for 1 second
+  }
+
+  nextShape();
+}
+
+// Call this after VRM is loaded and added to the scene
+testMouthShapes();
+
 
 
 /* Viseme ID map from backend */
