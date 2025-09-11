@@ -366,6 +366,10 @@ let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
 
+// 🔹 Track last viseme so we can persist it between events
+let currentVisemeName = null;
+let currentVisemeWeight = 0;
+
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] Request in-flight; aborting previous and starting new');
@@ -435,6 +439,9 @@ async function speakAndType(text, agentDiv) {
             if (!src) return null;
             const name = resolveMouth(src);
             if (!name) return null;
+            // 🔹 Track current viseme
+            currentVisemeName = name;
+            currentVisemeWeight = 1.0;
             console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
             return { t: v.TimeMs / 1000, values: { [name]: 1 } };
           })
@@ -451,6 +458,9 @@ async function speakAndType(text, agentDiv) {
           if (!src) return;
           const name = resolveMouth(src);
           if (!name) return;
+          // 🔹 Track current viseme
+          currentVisemeName = name;
+          currentVisemeWeight = 1.0;
           console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
           setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
         });
@@ -459,6 +469,8 @@ async function speakAndType(text, agentDiv) {
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
+      currentVisemeName = null;
+      currentVisemeWeight = 0;
       // Optional: clear any residual mouth weights the frame speech ends
       const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
       if (mgr) {
@@ -576,7 +588,7 @@ function initMicButton() {
     recog.interimResults = false;
     recog.maxAlternatives= 1;
 
-    recog.onresult = e => {
+     recog.onresult = e => {
       document.getElementById('agentInput').value = e.results[0][0].transcript;
       sendToAgent();
     };
@@ -629,6 +641,10 @@ function animate() {
     // 🔹 Ensure mouth is not overridden by expressions while speaking
     if (isSpeaking && mgr) {
       maskMouthShapesWhileSpeaking(mgr);
+      // 🔹 Re‑apply the most recent viseme so it persists between events
+      if (currentVisemeName) {
+        mgr.setValue(currentVisemeName, currentVisemeWeight);
+      }
     }
 
     if (shouldUseBlendfaces()) blendfaces.update(dt);
@@ -644,7 +660,7 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
-animate();
+animate();     
 
 /* === Window resize handler === */
 window.addEventListener('resize', () => {
