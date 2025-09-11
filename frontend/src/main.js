@@ -301,6 +301,8 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   }
 });
 
+console.log('[Viseme raw IDs]', visemes.map(v => v.VisemeId));
+
 /* Viseme ID map from backend */
 // Backend → VRM viseme aliasing
 const visemeMap = {
@@ -427,8 +429,10 @@ async function speakAndType(text, agentDiv) {
         const keys = visemes
           .map(v => {
             const src = visemeMap[v.VisemeId];
+            console.log(`VisemeId ${v.VisemeId} → src:`, src);
             if (!src) return null;
             const name = resolveMouth(src);
+            console.log(`resolveMouth(${src}) →`, name);
             if (!name) return null;
             // Map to actual VRM expression name for re-apply in animate()
             const mapped = expressionMap[name] ?? name;
@@ -466,6 +470,7 @@ async function speakAndType(text, agentDiv) {
       currentVisemeWeight = 0;
       // Optional: clear any residual mouth weights the frame speech ends
       const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+      console.log('[VRM] Available expressions:', mgr.getExpressionNames?.());
       if (mgr) {
         for (const key of mouthSet) {
           const mapped = expressionMap[key] ?? key;
