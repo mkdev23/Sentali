@@ -49,7 +49,7 @@ namespace SentaliApp.Controllers
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                 _logger.LogInformation("[TTS] Synthesis start");
                 var (audioBytes, visemes) = await _tts.SynthesizeWithVisemesAsync(req.Text, cts.Token);
-                _logger.LogInformation("[TTS] Synthesis done, {Len} bytes", audioBytes?.Length ?? 0);
+                _logger.LogInformation("[TTS] Synthesis done, {Len} bytes, {VisemeCount} visemes", audioBytes?.Length ?? 0, visemes.Count);
 
                 if (audioBytes == null || audioBytes.Length == 0)
                 {
@@ -66,7 +66,7 @@ namespace SentaliApp.Controllers
                 var visemePayload = visemes.Select(v => new
                 {
                     VisemeId = v.VisemeId,
-                    TimeMs = (ulong)(v.AudioOffset / 10000L) // 100ns → ms
+                    TimeMs = (ulong)v.AudioOffset / 10000UL // 100ns → ms, use ulong literal for divisor
                 }).ToList();
 
                 return Ok(new
