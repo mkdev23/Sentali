@@ -10,9 +10,10 @@ namespace SentaliApp.Services
     public class BlobStorageService
     {
         private readonly BlobContainerClient _container;
+        private readonly BlobServiceClient _serviceClient;
         private readonly ILogger<BlobStorageService> _logger;
 
-        public BlobStorageService(IConfiguration config, DefaultAzureCredential cred, ILogger<BlobStorageService> logger)
+        public BlobStorageService(IConfiguration config, ILogger<BlobStorageService> logger)
         {
             _logger = logger;
 
@@ -25,11 +26,9 @@ namespace SentaliApp.Services
             if (!Uri.TryCreate(endpointRaw, UriKind.Absolute, out var endpointUri))
                 throw new InvalidOperationException($"Invalid BLOB_STORAGE_ENDPOINT: '{endpointRaw}'");
 
-            var baseUri = endpointUri.AbsoluteUri.TrimEnd('/');
-            if (baseUri.EndsWith($"/{containerName}", StringComparison.OrdinalIgnoreCase))
-                _container = new BlobContainerClient(endpointUri, cred);
-            else
-                _container = new BlobContainerClient(new Uri($"{baseUri}/{containerName}"), cred);
+            // Create service + container clients using Managed Identity
+            _serviceClient = new BlobServiceClient(endpointUri, new DefaultAzureCredential());
+            _container = _serviceClient.GetBlobContainerClient(containerName);
         }
 
         public async Task<string> UploadAndGetSas(byte[] data)
@@ -41,11 +40,27 @@ namespace SentaliApp.Services
             var headers = new BlobHttpHeaders { ContentType = "audio/mpeg" };
             await blob.UploadAsync(ms, new BlobUploadOptions { HttpHeaders = headers });
 
-            if (!blob.CanGenerateSasUri)
-                throw new InvalidOperationException("Blob client cannot generate SAS URI. Check credentials/roles.");
-
+            // Generate a User Delegation SAS (works with Managed Identity)
             var sasExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
-            var sasUri = blob.GenerateSasUri(BlobSasPermissions.Read, sasExpiry);
+            var delegationKey = await _serviceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, sasExpiry);
+
+            var sasBuilder = new BlobSasBuilder
+            {
+                BlobContainerName = _container.Name,
+                BlobName = blobName,
+                Resource = "b", // blob
+                StartsOn = DateTimeOffset.UtcNow.AddMinutes(-1),
+                ExpiresOn = sasExpiry
+            };
+
+            sasBuilder.SetPermissions(BlobSasPermissions.Read);
+
+            // Build SAS token from the builder + user delegation key
+            var accountName = _serviceClient.AccountName;
+            var sasToken = sasBuilder.ToSasQueryParameters(delegationKey, accountName).ToString();
+
+            // Append SAS token to blob URI
+            var sasUri = new Uri($"{blob.Uri}?{sasToken}");
 
             _logger.LogInformation("[BlobStorage] Uploaded {BlobName}, SAS expires at {Expiry}", blobName, sasExpiry);
 
