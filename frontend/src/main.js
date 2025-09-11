@@ -123,7 +123,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return !!blendfaces && (!blendfacesToggle || blendfacesToggle.checked);
+  return !!blendfaces; // Use Blendfaces by default since toggle removed
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -281,7 +281,6 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 });
 
 /* Viseme ID map from backend */
-// Backend → VRM viseme aliasing
 const visemeMap = {
   1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
   6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
@@ -305,18 +304,20 @@ function resolveMouth(name) {
   for (const c of candidates) {
     if (available.has(c)) return c;
   }
-  // Last‑chance fallbacks if your map doesn’t list vowels explicitly
+  // Last-chance fallbacks if your map doesn’t list vowels explicitly
   const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
   if (fallback && available.has(fallback)) return fallback;
-  // If still nothing, return null so we don’t spam set calls that do nothing
-  console.warn('[Viseme] No matching expression for', name, 'in expressionMap keys:', [...available]);
-  return null;
+  // If still nothing, return a default to avoid skipping (e.g., neutral as fallback)
+  console.warn('[Viseme] No exact match for', name, 'using neutral as fallback, available:', [...available]);
+  return 'neutral'; // Default to neutral if no match, ensuring some movement
 }
 
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
+let currentVisemeName = null;
+let currentVisemeWeight = 0;
 
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
@@ -403,19 +404,27 @@ async function speakAndType(text, agentDiv) {
           const name = resolveMouth(src);
           if (!name) return;
           console.log(`[Viseme] ID ${v.VisemeId} → ${name} at ${v.TimeMs}ms`);
-          setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.TimeMs);
+          setTimeout(() => {
+            setExpressionPersistent(name, 1, DECAY_VISEME);
+            currentVisemeName = name; // Track last viseme
+            currentVisemeWeight = 1;  // Track last weight
+          }, v.TimeMs);
         });
       }
     }, { once: true });
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
+      currentVisemeName = null; // Reset on end
+      currentVisemeWeight = 0;
     });
 
     audio.play().catch(err => {
       console.warn('[TTS] Audio play failed:', err);
       typeOut(agentDiv, 'agent', text, durationMs);
       isSpeaking = false;
+      currentVisemeName = null;
+      currentVisemeWeight = 0;
     });
 
   } catch (err) {
@@ -426,6 +435,8 @@ async function speakAndType(text, agentDiv) {
     }
     updateChatEntry(agentDiv, 'agent', text);
     isSpeaking = false;
+    currentVisemeName = null;
+    currentVisemeWeight = 0;
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
@@ -518,7 +529,7 @@ function initMicButton() {
     const recog = new webkitSpeechRecognition();
     recog.lang = 'en-US';
     recog.interimResults = false;
-    recog.maxAlternatives= 1;
+    recog.maxAlternatives = 1;
 
     recog.onresult = e => {
       document.getElementById('agentInput').value = e.results[0][0].transcript;
@@ -547,13 +558,13 @@ function animate() {
 
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
 
-    // default neutral "happy" expression (ambient idle)
+    // Default neutral "happy" expression (ambient idle)
     if (!isSpeaking && Object.keys(activeExpr).length === 0) {
       mgr.setValue('happy', 1.0);
       mgr.setValue('neutral', 0.0);
     }
 
-    // spine sway
+    // Spine sway
     const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
     if (spine) {
       spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
@@ -567,11 +578,11 @@ function animate() {
       }
     }
 
-    // 1) expressions/visemes
+    // Expressions/visemes
     applyExpressions(dt);
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
-    // 2) ambient: breathe → gaze → blink
+    // Ambient: breathe → gaze → blink
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
