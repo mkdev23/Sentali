@@ -193,22 +193,14 @@ app.MapPost("/api/tts", async (
         var sasUrl = await blob.UploadAndGetSas(audioBytes);
 
         var visemePayload = visemes
-            .Select(v => new VisemePayload
-            {
-                VisemeId = v.VisemeId,
-                TimeMs   = (ulong)(v.AudioOffset / 10000L)
-            })
-            .ToList();
+    .Select(v => new VisemePayload
+    {
+        VisemeId = v.VisemeId,
+        TimeMs   = (ulong)(v.AudioOffset / 10000L)
+    })
+    .ToList();
 
-        if (visemePayload.Count == 0)
-        {
-            visemePayload.Add(new VisemePayload
-            {
-                VisemeId = 0,
-                TimeMs   = 0
-            });
-            expression = "happy";
-        }
+        logger.LogInformation("[TTS] Returning {Count} visemes to client", visemePayload.Count);
 
         return Results.Ok(new
         {
@@ -217,6 +209,8 @@ app.MapPost("/api/tts", async (
             audioUrl   = sasUrl,
             visemes    = visemePayload
         });
+
+
     }
     catch (Exception ex)
     {

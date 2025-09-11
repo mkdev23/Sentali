@@ -40,7 +40,7 @@ namespace SentaliApp.Services
             }
 
             // Use MP3 directly from Azure Speech
-            _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+           /* _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
 
             // Enable viseme events
@@ -48,7 +48,18 @@ namespace SentaliApp.Services
                 "speech.synthesis.requestViseme",
                 "true",
                 ServicePropertyChannel.UriQueryParameter
+            ); */
+            _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+            // For debug, PCM is more reliable for viseme events
+            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+
+            _speechConfig.SetServiceProperty(
+                "speech.synthesis.requestViseme",
+                "true",
+                ServicePropertyChannel.UriQueryParameter
             );
+
+
 
             WarmUpAsync().GetAwaiter().GetResult();
         }
