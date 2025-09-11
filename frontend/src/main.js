@@ -278,6 +278,13 @@ function initAvatar(vrm) {
 
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
+  
+  // VRM 0.x compatibility
+  if (!vrm.expressionManager && vrm.blendShapeProxy) {
+    vrm.expressionManager = vrm.blendShapeProxy;
+  }
+
+
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
 
