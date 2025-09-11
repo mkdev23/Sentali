@@ -61,7 +61,7 @@ function isMobile() {
 }
 
 // Load skybox with timeout/retry and mobile fallback to PNG
-async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 10000) {
+async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await Promise.race([
