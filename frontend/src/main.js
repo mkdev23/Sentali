@@ -155,8 +155,7 @@ function applyExpressions(delta) {
   if (!mgr) return;
 
   for (const [m, st] of Object.entries(activeExpr)) {
-    // Skip viseme keys during speaking to avoid conflicts with blendfaces
-    if (isSpeaking && ['aa', 'ee', 'ih', 'oh', 'ou'].includes(m)) continue;
+    if (isSpeaking && (['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].includes(m))) continue; // Skip visemes and neutral during speaking
     st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
     if (st.weight < 0.01) {
       delete activeExpr[m];
@@ -174,7 +173,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return false; // Keep disabled until blendfaces is fixed
+  return false; // Temporarily disable blendfaces to test scheduleVisemes
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -306,9 +305,9 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
-    smooth: 0.9, // Very snappy to minimize smoothing
-    decay: 0,    // No decay for visemes
-    rest: { blink: 0.0 } // Removed neutral to avoid override
+    smooth: 0.9,
+    decay: 0,
+    rest: { blink: 0.0 }
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
 
@@ -372,20 +371,40 @@ function scheduleVisemes(visemes, audio) {
     .map(mapViseme)
     .filter(Boolean);
 
-  keys.forEach(({ t, key }) => {
+  const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'];
+
+  keys.forEach(({ t, key }, index) => {
     setTimeout(() => {
       if (mgr.getValue(key) === undefined) {
         console.warn(`[Viseme] Key ${key} not found on VRM model`);
       }
-      mgr.setValue(key, 1.0);
+      // Reset all viseme keys to 0
+      visemeKeys.forEach(vk => {
+        if (mgr.getValue(vk) !== undefined) {
+          mgr.setValue(vk, 0.0);
+        }
+      });
+      // Set the current key to 1.0 if not neutral
+      if (key !== 'neutral') {
+        mgr.setValue(key, 1.0);
+      }
       mgr.update();
       console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)})`);
-      setTimeout(() => {
-        mgr.setValue(key, 0.0);
-        mgr.update();
-      }, 200); // Increased TTL
     }, Math.max(0, t * 1000));
   });
+
+  // After the last viseme, reset all to 0
+  if (keys.length > 0) {
+    const lastT = keys[keys.length - 1].t * 1000 + 200;
+    setTimeout(() => {
+      visemeKeys.forEach(vk => {
+        if (mgr.getValue(vk) !== undefined) {
+          mgr.setValue(vk, 0.0);
+        }
+      });
+      mgr.update();
+    }, lastT);
+  }
 
   if (audio) audio.play().catch(() => {});
 }
@@ -801,15 +820,22 @@ function animate() {
 
     if (isSpeaking && mgr) {
       maskMouthShapesWhileSpeaking(mgr);
-      if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
-        mgr.setValue(currentVisemeName, currentVisemeWeight);
-        console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
-      }
-      // Ensure neutral doesn’t override visemes
       if (mgr.getValue('neutral') !== undefined && mgr.getValue('neutral') > 0) {
         mgr.setValue('neutral', 0.0);
         mgr.update();
       }
+      if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
+        mgr.setValue(currentVisemeName, currentVisemeWeight);
+        console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
+      }
+      // Debug current viseme values
+      const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
+      visemeKeys.forEach(key => {
+        const value = mgr.getValue(key);
+        if (value !== undefined && value > 0) {
+          console.log(`[Viseme Debug] ${key} = ${value}`);
+        }
+      });
     }
 
     if (shouldUseBlendfaces()) {
