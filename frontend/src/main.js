@@ -155,7 +155,7 @@ function applyExpressions(delta) {
   if (!mgr) return;
 
   for (const [m, st] of Object.entries(activeExpr)) {
-    if (isSpeaking && ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].includes(m)) continue;
+    if (isSpeaking && ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral', 'joy', 'happy', 'angry', 'sorrow', 'fun', 'surprised'].includes(m)) continue;
     st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
     if (st.weight < 0.01) {
       delete activeExpr[m];
@@ -184,13 +184,13 @@ const wsClient = new WSClient({
     const audioUrl = data.audioUrl || data.audio;
     if (audioUrl) new Audio(audioUrl).play().catch(e => console.warn('WS audio error', e));
 
-    if (data.expression) {
+    if (data.expression && !isSpeaking) { // Only apply expressions when not speaking
       setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
     }
 
     if (data.type === 'blendshapes' && data.values) {
       for (const [n, w] of Object.entries(data.values)) {
-        setExpressionPersistent(n, Number(w), DECAY_EMO);
+        if (!isSpeaking) setExpressionPersistent(n, Number(w), DECAY_EMO);
       }
     }
 
@@ -373,28 +373,29 @@ function scheduleVisemes(visemes, audio) {
     .filter(k => k && k.key !== 'neutral');
 
   const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
+  const allBlendShapes = ['joy', 'angry', 'sorrow', 'neutral', 'fun', 'surprised', 'aa', 'ee', 'ih', 'oh', 'ou', 'blink', 'blinkleft', 'blinkright', 'lookdown', 'lookleft', 'lookright', 'lookup', 'infinity', 'irisbake'];
 
   keys.forEach(({ t, key }, index) => {
+    const nextT = index < keys.length - 1 ? keys[index + 1].t * 1000 : t * 1000 + 500; // Use next viseme time or 500ms
+    const duration = Math.min(nextT - t * 1000, 1000); // Cap at 1000ms
     setTimeout(() => {
-      // Reset all viseme keys to 0
-      visemeKeys.forEach(vk => {
+      // Reset all blend-shapes to 0
+      allBlendShapes.forEach(vk => {
         if (mgr.getValue(vk) !== undefined) {
           mgr.setValue(vk, 0.0);
         }
       });
       mgr.setValue(key, 1.0);
-      currentVisemeName = key;
-      currentVisemeWeight = 1.0;
       mgr.update();
-      console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)})`);
-      visemeKeys.forEach(vk => {
+      console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)}, duration: ${duration}ms)`);
+      allBlendShapes.forEach(vk => {
         const value = mgr.getValue(vk);
-        console.log(`[Viseme State] ${vk} = ${value}`);
+        console.log(`[BlendShape State] ${vk} = ${value}`);
       });
       setTimeout(() => {
         mgr.setValue(key, 0.0);
         mgr.update();
-      }, 500); // Increased TTL
+      }, duration);
     }, Math.max(0, t * 1000));
   });
 
@@ -402,13 +403,13 @@ function scheduleVisemes(visemes, audio) {
   if (keys.length > 0) {
     const lastT = keys[keys.length - 1].t * 1000 + 500;
     setTimeout(() => {
-      visemeKeys.forEach(vk => {
+      allBlendShapes.forEach(vk => {
         if (mgr.getValue(vk) !== undefined) {
           mgr.setValue(vk, 0.0);
         }
       });
       mgr.update();
-      console.log('[Viseme] Reset all visemes after sequence');
+      console.log('[Viseme] Reset all blend-shapes after sequence');
     }, lastT);
   }
 
@@ -511,10 +512,6 @@ let ttsInflight = false;
 let isSpeaking = false;
 let ttsAbortController = null;
 
-// Track last viseme (mapped to VRM expression name)
-let currentVisemeName = null;
-let currentVisemeWeight = 0;
-
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] Request in-flight; aborting previous and starting new');
@@ -570,11 +567,6 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    const expression = body.expression || 'neutral';
-    if (expression !== 'neutral') {
-      setExpressionPersistent(expression, 1.0, DECAY_EMO);
-    }
-
     audio.addEventListener('play', () => {
       isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
@@ -595,8 +587,6 @@ async function speakAndType(text, agentDiv) {
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
-      currentVisemeName = null;
-      currentVisemeWeight = 0;
       const mgr = getMgr();
       console.log('[VRM] Available expressions:', mgr?.getExpressionNames?.() || Object.keys(expressionMap));
       if (mgr) {
@@ -824,15 +814,11 @@ function animate() {
 
     if (isSpeaking && mgr) {
       maskMouthShapesWhileSpeaking(mgr);
-      if (mgr.getValue('neutral') !== undefined && mgr.getValue('neutral') > 0) {
-        mgr.setValue('neutral', 0.0);
-        mgr.update();
-      }
-      const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
-      visemeKeys.forEach(key => {
+      const allBlendShapes = ['joy', 'angry', 'sorrow', 'neutral', 'fun', 'surprised', 'aa', 'ee', 'ih', 'oh', 'ou', 'blink', 'blinkleft', 'blinkright', 'lookdown', 'lookleft', 'lookright', 'lookup', 'infinity', 'irisbake'];
+      allBlendShapes.forEach(key => {
         const value = mgr.getValue(key);
         if (value !== undefined && value > 0) {
-          console.log(`[Viseme Debug] ${key} = ${value}`);
+          console.log(`[BlendShape Debug] ${key} = ${value}`);
         }
       });
     }
