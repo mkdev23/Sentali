@@ -436,21 +436,26 @@ function resolveMouth(name) {
   return null;
 }
 
-function mapViseme(v) {
-  const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
-  const src = id != null ? visemeMap[id] : (v.name ?? null);
-  if (!src) return null;
-
-  const alias = resolveMouth(src);      // 'aa' etc.
+function resolveToVRMKey(viseme) {
+  // 1) raw alias from backend
+  const alias = typeof viseme === 'string'
+    ? viseme
+    : visemeMap[viseme.visemeId ?? viseme.id] || null;
   if (!alias) return null;
 
-  const mapped = expressionMap[alias] ?? alias; // 'A','E',...
-  if (mapped === 'neutral' && !expressionMap.neutral) return null; // skip silence if no neutral
-  return { t: (v.timeMs ?? 0) / 1000, key: mapped };
+  // 2) direct map to your model’s shape key
+  const key = expressionMap[alias];
+  if (key) return key;
 
+  // 3) single-letter fallback
+  return { aa:'A', ee:'E', ih:'I', oh:'O', ou:'U' }[alias] || null;
+}
 
-
-
+function mapViseme(v) {
+  const key = resolveToVRMKey(v);
+  if (!key) return null;
+  console.log('→ mapped viseme:', key);
+  return { t: v.timeMs/1000, key };
 }
 
 
