@@ -155,7 +155,7 @@ function applyExpressions(delta) {
   if (!mgr) return;
 
   for (const [m, st] of Object.entries(activeExpr)) {
-    if (isSpeaking && (['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].includes(m))) continue; // Skip visemes and neutral during speaking
+    if (isSpeaking && ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].includes(m)) continue;
     st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
     if (st.weight < 0.01) {
       delete activeExpr[m];
@@ -173,7 +173,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return false; // Temporarily disable blendfaces to test scheduleVisemes
+  return false; // Keep disabled until verified
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -365,37 +365,37 @@ function scheduleVisemes(visemes, audio) {
   const mgr = getMgr();
   if (!mgr) return;
 
+  // Filter out neutral visemes
   const keys = visemes
     .slice()
     .sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0))
     .map(mapViseme)
-    .filter(Boolean);
+    .filter(k => k && k.key !== 'neutral'); // Skip neutral
 
-  const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'];
+  const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
   keys.forEach(({ t, key }, index) => {
     setTimeout(() => {
-      if (mgr.getValue(key) === undefined) {
-        console.warn(`[Viseme] Key ${key} not found on VRM model`);
-      }
       // Reset all viseme keys to 0
       visemeKeys.forEach(vk => {
         if (mgr.getValue(vk) !== undefined) {
           mgr.setValue(vk, 0.0);
         }
       });
-      // Set the current key to 1.0 if not neutral
-      if (key !== 'neutral') {
-        mgr.setValue(key, 1.0);
-      }
+      mgr.setValue(key, 1.0);
       mgr.update();
       console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)})`);
+      // Reset after 300ms
+      setTimeout(() => {
+        mgr.setValue(key, 0.0);
+        mgr.update();
+      }, 300);
     }, Math.max(0, t * 1000));
   });
 
   // After the last viseme, reset all to 0
   if (keys.length > 0) {
-    const lastT = keys[keys.length - 1].t * 1000 + 200;
+    const lastT = keys[keys.length - 1].t * 1000 + 300;
     setTimeout(() => {
       visemeKeys.forEach(vk => {
         if (mgr.getValue(vk) !== undefined) {
@@ -438,7 +438,7 @@ function resolveToVRMKey(viseme) {
   }
   const mgr = getMgr();
   if (mgr && mgr.getValue(alias) !== undefined) {
-    return alias; // Use the alias directly if it exists on the model
+    return alias;
   }
   const key = expressionMap[alias];
   if (key && mgr && mgr.getValue(key) !== undefined) {
@@ -490,7 +490,6 @@ const mouthSet = new Set(mouthAliasList);
 
 function maskMouthShapesWhileSpeaking(mgr) {
   if (!isSpeaking) return;
-  // Only reset non-viseme mouth shapes to avoid overriding visemes
   for (const key of Object.keys(expressionMap || {})) {
     if (mouthSet.has(key) && !['aa', 'ee', 'ih', 'oh', 'ou'].includes(key)) {
       const mapped = expressionMap[key] ?? key;
@@ -565,7 +564,6 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
-    // Set emotion expression, but only if it doesn’t affect mouth shapes
     const expression = body.expression || 'neutral';
     if (expression !== 'neutral') {
       setExpressionPersistent(expression, 1.0, DECAY_EMO);
@@ -578,7 +576,7 @@ async function speakAndType(text, agentDiv) {
         const items = visemes
           .map(v => {
             const m = mapViseme(v);
-            return m ? { t: m.t, values: { [m.key]: 1 } } : null;
+            return m && m.key !== 'neutral' ? { t: m.t, values: { [m.key]: 1 } } : null;
           })
           .filter(Boolean);
         console.log('[Blendfaces] Timeline items:', items);
@@ -828,7 +826,6 @@ function animate() {
         mgr.setValue(currentVisemeName, currentVisemeWeight);
         console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
       }
-      // Debug current viseme values
       const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
       visemeKeys.forEach(key => {
         const value = mgr.getValue(key);
@@ -840,7 +837,6 @@ function animate() {
 
     if (shouldUseBlendfaces()) {
       blendfaces.update(dt);
-      // Debug current blendface values
       const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
       visemeKeys.forEach(key => {
         const value = mgr.getValue(key);
