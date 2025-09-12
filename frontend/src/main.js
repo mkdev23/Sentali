@@ -1,3 +1,4 @@
+
 // main.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -326,9 +327,9 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
             exprMgr.setValue(vk, 0.0);
           }
         });
-        exprMgr.setValue(k, 1.0);
+        exprMgr.setValue(k, 2.0); // Increased weight
         exprMgr.update();
-        console.log(`[Sanity Test] Set ${k} to 1.0 (exists: ${exprMgr.getValue(k) !== undefined})`);
+        console.log(`[Sanity Test] Set ${k} to 2.0 (exists: ${exprMgr.getValue(k) !== undefined}, actual: ${exprMgr.getValue(k)})`);
         allBlendShapes.forEach(vk => {
           const value = exprMgr.getValue(vk);
           console.log(`[Sanity Test State] ${vk} = ${value}`);
@@ -359,8 +360,8 @@ function testVRM0MouthShapes() {
       return;
     }
     const key = presets[i];
-    console.log(`[Test] Setting ${key} to 1.0 (exists: ${mgr.getValue(key) !== undefined})`);
-    mgr.setValue(key, 1.0);
+    console.log(`[Test] Setting ${key} to 2.0 (exists: ${mgr.getValue(key) !== undefined})`);
+    mgr.setValue(key, 2.0); // Increased weight
     mgr.update();
     i++;
     setTimeout(next, 1000); // Extended to 1000ms
@@ -399,7 +400,7 @@ function scheduleVisemes(visemes, audio) {
             mgr.setValue(vk, 0.0);
           }
         });
-        mgr.setValue(key, 1.0);
+        mgr.setValue(key, 2.0); // Increased weight
         mgr.update();
         console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)}, duration: ${duration}ms)`);
         allBlendShapes.forEach(vk => {
@@ -589,7 +590,7 @@ async function speakAndType(text, agentDiv) {
         const items = visemes
           .map(v => {
             const m = mapViseme(v);
-            return m && m.key !== 'neutral' ? { t: m.t, values: { [m.key]: 1 } } : null;
+            return m && m.key !== 'neutral' ? { t: m.t, values: { [m.key]: 2.0 } } : null; // Increased weight
           })
           .filter(Boolean);
         console.log('[Blendfaces] Timeline items:', items);
