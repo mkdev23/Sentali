@@ -232,7 +232,7 @@ let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
 
 function handleBlink(delta) {
-  if (isSpeaking) return; // Skip blinking during speaking to mimic VSeeFace
+  if (isSpeaking) return; // Skip blinking during speaking
   blinkTimer -= delta;
   if (blinkTimer <= 0) {
     if (shouldUseBlendfaces()) {
@@ -322,20 +322,20 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     ['aa', 'ee', 'ih', 'oh', 'ou'].forEach((k, i) => {
       setTimeout(() => {
         allBlendShapes.forEach(vk => {
-          if (mgr.getValue(vk) !== undefined) {
-            mgr.setValue(vk, 0.0);
+          if (exprMgr.getValue(vk) !== undefined) {
+            exprMgr.setValue(vk, 0.0);
           }
         });
-        mgr.setValue(k, 1.0);
-        mgr.update();
-        console.log(`[Sanity Test] Set ${k} to 1.0 (exists: ${mgr.getValue(k) !== undefined})`);
+        exprMgr.setValue(k, 1.0);
+        exprMgr.update();
+        console.log(`[Sanity Test] Set ${k} to 1.0 (exists: ${exprMgr.getValue(k) !== undefined})`);
         allBlendShapes.forEach(vk => {
-          const value = mgr.getValue(vk);
+          const value = exprMgr.getValue(vk);
           console.log(`[Sanity Test State] ${vk} = ${value}`);
         });
         setTimeout(() => {
-          mgr.setValue(k, 0.0);
-          mgr.update();
+          exprMgr.setValue(k, 0.0);
+          exprMgr.update();
         }, 1000); // Extended to 1000ms
       }, i * 1200); // Staggered by 1200ms
     });
@@ -386,11 +386,12 @@ function scheduleVisemes(visemes, audio) {
   const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
   const allBlendShapes = ['joy', 'angry', 'sorrow', 'neutral', 'fun', 'surprised', 'aa', 'ee', 'ih', 'oh', 'ou', 'blink', 'blinkleft', 'blinkright', 'lookdown', 'lookleft', 'lookright', 'lookup', 'infinity', 'irisbake'];
 
-  // Wait for audio to start playing
+  // Wait for audio to start playing with a slight delay
   audio.addEventListener('play', () => {
+    console.log('[TTS] Audio started at:', performance.now());
     keys.forEach(({ t, key }, index) => {
       const nextT = index < keys.length - 1 ? keys[index + 1].t * 1000 : t * 1000 + 500;
-      const duration = Math.max(200, Math.min(nextT - t * 1000, 1000)); // Minimum 200ms
+      const duration = Math.max(300, Math.min(nextT - t * 1000, 1000)); // Minimum 300ms
       setTimeout(() => {
         // Reset all blend-shapes to 0
         allBlendShapes.forEach(vk => {
@@ -409,12 +410,12 @@ function scheduleVisemes(visemes, audio) {
           mgr.setValue(key, 0.0);
           mgr.update();
         }, duration);
-      }, Math.max(0, t * 1000));
+      }, Math.max(0, t * 1000) + 100); // 100ms delay for audio sync
     });
 
     // After the last viseme, reset all to 0
     if (keys.length > 0) {
-      const lastT = keys[keys.length - 1].t * 1000 + 500;
+      const lastT = keys[keys.length - 1].t * 1000 + 500 + 100; // Account for delay
       setTimeout(() => {
         allBlendShapes.forEach(vk => {
           if (mgr.getValue(vk) !== undefined) {
@@ -426,6 +427,8 @@ function scheduleVisemes(visemes, audio) {
       }, lastT);
     }
   }, { once: true });
+
+  if (audio) audio.play().catch(() => {});
 }
 
 /* Viseme ID map from backend */
@@ -704,7 +707,7 @@ async function sendToAgent() {
       ? await chatRes.json().catch(() => null)
       : await chatRes.text().catch(() => '');
 
-    if (!res.ok) {
+    if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
       addChatEntry('agent', '[Error contacting Agent]');
       return;
@@ -798,7 +801,7 @@ function animate() {
   if (currentVRM) {
     currentVRM.update(dt);
 
-    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    const mgr = getMgr();
 
     if (!isSpeaking && Object.keys(activeExpr).length === 0) {
       if (mgr.getValue('joy') !== undefined) {
