@@ -155,6 +155,8 @@ function applyExpressions(delta) {
   if (!mgr) return;
 
   for (const [m, st] of Object.entries(activeExpr)) {
+    // Skip viseme keys during speaking to avoid conflicts with blendfaces
+    if (isSpeaking && ['aa', 'ee', 'ih', 'oh', 'ou'].includes(m)) continue;
     st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
     if (st.weight < 0.01) {
       delete activeExpr[m];
@@ -415,7 +417,6 @@ function resolveToVRMKey(viseme) {
     console.warn(`[resolveToVRMKey] No alias for viseme:`, viseme);
     return null;
   }
-  // Check if the alias is a valid VRM expression
   const mgr = getMgr();
   if (mgr && mgr.getValue(alias) !== undefined) {
     return alias; // Use the alias directly if it exists on the model
@@ -470,8 +471,9 @@ const mouthSet = new Set(mouthAliasList);
 
 function maskMouthShapesWhileSpeaking(mgr) {
   if (!isSpeaking) return;
+  // Only reset non-viseme mouth shapes to avoid overriding visemes
   for (const key of Object.keys(expressionMap || {})) {
-    if (mouthSet.has(key)) {
+    if (mouthSet.has(key) && !['aa', 'ee', 'ih', 'oh', 'ou'].includes(key)) {
       const mapped = expressionMap[key] ?? key;
       if (mgr.getValue(mapped) !== undefined) {
         mgr.setValue(mapped, 0.0);
@@ -544,8 +546,11 @@ async function speakAndType(text, agentDiv) {
       ? audio.duration * 1000
       : Math.max(1500, Math.min(12000, text.split(/\s+/).length / 2.5 * 1000));
 
+    // Set emotion expression, but only if it doesn’t affect mouth shapes
     const expression = body.expression || 'neutral';
-    setExpressionPersistent(expression, 1.0, DECAY_EMO);
+    if (expression !== 'neutral') {
+      setExpressionPersistent(expression, 1.0, DECAY_EMO);
+    }
 
     audio.addEventListener('play', () => {
       isSpeaking = true;
@@ -771,8 +776,8 @@ function animate() {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
 
     if (!isSpeaking && Object.keys(activeExpr).length === 0) {
-      if (mgr.getValue('happy') !== undefined) {
-        mgr.setValue('happy', 1.0);
+      if (mgr.getValue('joy') !== undefined) {
+        mgr.setValue('joy', 1.0);
       }
       if (mgr.getValue('neutral') !== undefined) {
         mgr.setValue('neutral', 0.0);
@@ -798,10 +803,21 @@ function animate() {
       maskMouthShapesWhileSpeaking(mgr);
       if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
         mgr.setValue(currentVisemeName, currentVisemeWeight);
+        console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
       }
     }
 
-    if (shouldUseBlendfaces()) blendfaces.update(dt);
+    if (shouldUseBlendfaces()) {
+      blendfaces.update(dt);
+      // Debug current blendface values
+      const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
+      visemeKeys.forEach(key => {
+        const value = mgr.getValue(key);
+        if (value !== undefined && value > 0) {
+          console.log(`[Blendfaces Debug] ${key} = ${value}`);
+        }
+      });
+    }
 
     handleBreath(t);
     handleGaze(dt);
