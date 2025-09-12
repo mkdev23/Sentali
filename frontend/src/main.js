@@ -331,6 +331,10 @@ function testVRM0MouthShapes() {
 
 // Call this after VRM is loaded and added to the scene
 testVRM0MouthShapes();
+const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+['A','E','I','O','U'].forEach(k => mgr?.setValue(k, 1.0));
+mgr?.update();
+setTimeout(() => { ['A','E','I','O','U'].forEach(k => mgr?.setValue(k, 0.0)); mgr?.update(); }, 800);
 
 
 
@@ -357,13 +361,37 @@ const vowelAliases = {
 
 // Resolve to a mouth expression that actually exists in your VRM/expressionMap
 function resolveMouth(name) {
-  // Prefer explicit aliases first
   const candidates = vowelAliases[name] || [name];
-  const available = new Set(Object.keys(expressionMap || {}));
+  const available = new Set(Object.values(expressionMap || {})); // actual VRM keys
 
+  // Try aliases first
   for (const c of candidates) {
-    if (available.has(c)) return c;
+    if (available.has(c)) {
+      // Find the alias key in expressionMap that maps to this VRM key
+      const aliasKey = Object.keys(expressionMap).find(k => expressionMap[k] === c);
+      return aliasKey || name;
+    }
   }
+
+  // Single-letter VRM0 fallback
+  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
+  if (fallback && available.has(fallback)) {
+    const aliasKey = Object.keys(expressionMap).find(k => expressionMap[k] === fallback);
+    return aliasKey || name;
+  }
+
+  // Neutral only if it exists
+  if (name === 'neutral' && available.has('neutral')) {
+    return 'neutral';
+  }
+
+  console.warn('[Viseme] No matching VRM0 mouth for', name);
+  return null;
+}
+
+
+
+  
 
   // Single-letter VRM0 fallback
   const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
@@ -374,7 +402,7 @@ function resolveMouth(name) {
 
   console.warn('[Viseme] No matching VRM0 mouth for', name);
   return null;
-}
+
 
 
 
