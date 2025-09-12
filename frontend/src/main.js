@@ -1,4 +1,3 @@
-// main.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { expressionMap } from './vrmMapping.js';
@@ -7,63 +6,164 @@ import { WSClient } from './ws.js';
 import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
-// UI toggles and endpoints
+// ————— Settings & Globals —————
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
-// Scene, camera, renderer
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
-const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('c') });
+let currentVRM      = null;
+let exprMgr         = null;
+let vrmReady        = false;
+let blendfaces      = null;
+let blendfacesWS    = null;
+let isSpeaking      = false;
 
-camera.position.set(0, 1.6, 4.5);
-camera.updateProjectionMatrix();
+const activeExpr    = {};
+const DECAY_EMO     = 3.0;
+const DECAY_VISEME  = 10.0;
+const SMOOTH        = 0.4;
 
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const clock         = new THREE.Clock();
+let chestBaseY      = 0,
+    blinkTimer      = 2 + Math.random()*3,
+    gazeTimer       = 2 + Math.random()*2,
+    gazeDirection   = 0,
+    currentViseme   = null,
+    currentWeight   = 0;
+
+// ————— Renderer & Scene —————
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ antialias:true, canvas });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace    = THREE.SRGBColorSpace;
+renderer.toneMapping         = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 
-// Controls
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.6, 0);
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(25,window.innerWidth/window.innerHeight,0.1,200);
+camera.position.set(0,1.6,4.5);
+
+const controls = new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,1.6,0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.minDistance = 1.0;
-controls.maxDistance = 6.0;
+controls.minDistance   = 1;
+controls.maxDistance   = 6;
 controls.update();
 
-// Lighting
-scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+scene.add(new THREE.AmbientLight(0xffffff,0.3));
 [
-  new THREE.DirectionalLight(0xffffff, 1.2),
-  new THREE.DirectionalLight(0xffffff, 0.6),
-  new THREE.DirectionalLight(0xffffff, 0.8)
-].forEach((light, i) => {
-  const pos = [[0.5,1,0.8],[-0.5,0.8,-0.8],[0,1,-1]][i];
-  light.position.set(...pos);
-  scene.add(light);
+  [0.5,1,0.8,1.2],
+  [-0.5,0.8,-0.8,0.6],
+  [0,1,-1,0.8]
+].forEach(([x,y,z,i])=>{
+  const dl = new THREE.DirectionalLight(0xffffff,i);
+  dl.position.set(x,y,z);
+  scene.add(dl);
 });
 
-// Groups
 const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
 scene.add(vrmGroup, skyGroup);
 
-let currentVRM;
-let blendfaces;
-let blendfacesWSHandler = null;
-const clock = new THREE.Clock();
+// ————— Viseme ID → Alias —————
+const visemeMap = {
+  0:'neutral',1:'aa',2:'aa',3:'ih',4:'ee',
+  5:'oh',6:'ou',7:'ou',8:'ee',9:'ih',
+ 10:'oh',11:'ou',12:'aa',13:'ee',14:'ih',
+ 15:'oh',16:'ou',17:'aa',18:'ee',19:'ih',
+ 20:'oh',21:'neutral'
+};
 
-let exprMgr = null;        // VRM 0.x: blendShapeProxy; VRM 1.x: expressionManager
-let vrmReady = false;
-
-function isVRM0() {
-  return !!(currentVRM && currentVRM.blendShapeProxy && !currentVRM.expressionManager);
+// ————— Resolver: alias → exact VRM0 key —————
+function resolveToVRMKey(v) {
+  const alias = typeof v==='string'
+    ? v
+    : visemeMap[v.visemeId ?? v.id] ?? null;
+  return alias ? expressionMap[alias] ?? null : null;
 }
 
-function getMgr() {
-  return exprMgr || (currentVRM?.expressionManager || currentVRM?.blendShapeProxy) || null;
+// ————— Blendfaces timeline builder —————
+function mapVisemeForBlendfaces(v) {
+  const key = resolveToVRMKey(v);
+  return key ? { t:(v.timeMs||0)/1000, values:{ [key]:1 } } : null;
+}
+
+// ————— Manual scheduler —————
+function scheduleVisemes(visemes,audio) {
+  if (!vrmReady) return;
+  const mgr = exprMgr || currentVRM.expressionManager || currentVRM.blendShapeProxy;
+  if (!mgr) return;
+
+  visemes
+    .slice().sort((a,b)=> (a.timeMs||0)-(b.timeMs||0))
+    .map(v=>{
+      const key = resolveToVRMKey(v);
+      return key ? { t:(v.timeMs||0)/1000, key } : null;
+    })
+    .filter(x=>x)
+    .forEach(({t,key})=>{
+      setTimeout(()=>{
+        mgr.setValue(key,1); mgr.update();
+        setTimeout(()=>{
+          mgr.setValue(key,0); mgr.update();
+        },120);
+      }, Math.max(0,t*1000));
+    });
+
+  audio.play().catch(e=>console.warn('Audio error',e));
+}
+
+// ————— Expression management —————
+function setExpressionPersistent(name,weight,decay=DECAY_EMO) {
+  const m = expressionMap[name] ?? name;
+  activeExpr[m] = { weight, decay };
+}
+
+function applyExpressions(delta) {
+  if (!vrmReady) return;
+  const mgr = exprMgr || currentVRM.expressionManager || currentVRM.blendShapeProxy;
+  if (!mgr) return;
+
+  for (const [m,s] of Object.entries(activeExpr)) {
+    s.weight = THREE.MathUtils.lerp(s.weight,0,s.decay*delta);
+    if (s.weight<0.01) { delete activeExpr[m]; continue; }
+    const c = mgr.getValue(m)||0;
+    const b = THREE.MathUtils.lerp(c,s.weight,SMOOTH);
+    mgr.setValue(m,b);
+  }
+  mgr.update();
+}
+
+// ————— Ambient blink/gaze/breath —————
+function handleBlink(dt) {
+  blinkTimer -= dt;
+  if (blinkTimer<=0) {
+    const mgr = exprMgr || currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    if (blendfaces) {
+      blendfaces.set('blink',1,'live',150);
+    } else if (mgr) {
+      mgr.setValue('blink',1); mgr.update();
+      setTimeout(()=>{ mgr.setValue('blink',0); mgr.update(); },150);
+    }
+    blinkTimer = 2+Math.random()*3;
+  }
+}
+
+function handleGaze(dt) {
+  gazeTimer -= dt;
+  if (gazeTimer<=0) {
+    gazeDirection = (Math.random()-0.5)*0.2;
+    gazeTimer = 2+Math.random()*2;
+  }
+  const head = currentVRM.humanoid.getNormalizedBoneNode('head')
+             || vrmGroup.getObjectByName('Head');
+  if (head) head.rotation.y += (gazeDirection-head.rotation.y)*0.05;
+}
+
+function handleBreath(t) {
+  const chest = currentVRM.humanoid.getNormalizedBoneNode('chest')
+             || currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
+  if (chest) chest.position.y = chestBaseY + Math.sin(t*0.5)*0.01;
 }
 
 
@@ -140,37 +240,36 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
   }
 })();
 
-// Expression management
-const activeExpr = {};
-const DECAY_EMO = 3.0;
-const DECAY_VISEME = 10.0;
-const SMOOTH = 0.4;
+loadVRM('/Assets/Sentali2.vrm',scene,camera,controls,vrm=>{
+  currentVRM = vrm;
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI;
 
-function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
-  const mapped = expressionMap[name] ?? name;
-  activeExpr[mapped] = { weight, decay };
-}
+  exprMgr  = vrm.expressionManager || vrm.blendShapeProxy;
+  vrmReady = !!exprMgr;
 
-function applyExpressions(delta) {
-  if (!vrmReady) return;
-  const mgr = getMgr();
-  if (!mgr) return;
+  // chest for breathing
+  const chest = vrm.humanoid.getNormalizedBoneNode('chest')
+             || vrm.humanoid.getNormalizedBoneNode('upper_chest');
+  if (chest) chestBaseY = chest.position.y;
 
-  for (const [m, st] of Object.entries(activeExpr)) {
-    st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
-    if (st.weight < 0.01) {
-      delete activeExpr[m];
-      continue;
-    }
-    const curr = mgr.getValue(m) || 0;
-    const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
-    mgr.setValue(m, blend);
-  }
-  mgr.update(); // commit all changes
-}
-function shouldUseBlendfaces() {
-  return !!blendfaces;
-}
+  // merge any missing viseme aliases
+  const available = exprMgr.getExpressionNames
+    ? exprMgr.getExpressionNames()
+    : Object.keys(vrm.blendShapeProxy.getBlendShapeGroupMap());
+  ['aa','ee','ih','oh','ou','neutral'].forEach(alias=>{
+    if (available.includes(alias)) expressionMap[alias] = alias;
+  });
+
+  blendfaces = new BlendfacesController(vrm,{
+    expressionMap, smooth:0.3, decay:1.5, rest:{ blink:0 }
+  });
+  blendfaces.attachWS(cb=>blendfacesWS=cb);
+
+  console.log('[VRM] loaded:', vrmReady);
+});
+
+
 
 /* WebSocket for visemes and blendshapes */
 const wsClient = new WSClient({
@@ -228,57 +327,7 @@ function sanitizeForTTS(s) {
   return out.trim();
 }
 
-/* Ambient state & behaviours (countdown) */
-let chestBaseY = 0;
-let blinkTimer = 2 + Math.random() * 3;
-let gazeTimer = 2 + Math.random() * 2;
-let gazeDirection = 0;
 
-function handleBlink(delta) {
-  blinkTimer -= delta;
-  if (blinkTimer <= 0) {
-    
-    if (shouldUseBlendfaces()) {
-      blendfaces.set('blink', 1.0, 'live', 150);
-    } else {
-      mgr.setValue('blink', 1.0);
-      mgr.update();
-      setTimeout(() => {
-        mgr.setValue('blink', 0.0);
-        mgr.update();
-      }, 150);
-    }
-    blinkTimer = 2 + Math.random() * 3;
-  }
-}
-
-function handleGaze(delta) {
-  gazeTimer -= delta;
-  if (gazeTimer <= 0) {
-    gazeDirection = (Math.random() - 0.5) * 0.2;
-    gazeTimer = 2 + Math.random() * 2;
-  }
-  let head = currentVRM.humanoid.getNormalizedBoneNode('head');
-  if (!head) {
-    head = vrm.scene.getObjectByName('Head');
-  }
-  if (head) {
-    head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
-  }
-}
-
-function handleBreath(t) {
-  let chest = currentVRM.humanoid.getNormalizedBoneNode('chest');
-  if (!chest) {
-    chest = currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
-  }
-  if (!chest) {
-    chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
-  }
-  if (chest) {
-    chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
-  }
-}
 
 /* Load VRM + initialize ambient timers */
 function initAvatar(vrm) {
@@ -318,7 +367,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 
   // Sanity test ONLY after exprMgr is valid
   if (vrmReady) {
-    ['A','E','I','O','U'].forEach((k, i) => {
+    ['aa','ee','ih','oh','ou'].forEach((k, i) => {
       setTimeout(() => {
         exprMgr.setValue(k, 1.0);
         exprMgr.update();
@@ -387,23 +436,6 @@ function scheduleVisemes(visemes, audio) {
 
   if (audio) audio.play().catch(() => {});
 }
-
-
-
-
-
-
-/* Viseme ID map from backend */
-// Backend → VRM viseme aliasing
-const visemeMap = {
-  0: 'joy', // closed/neutral mouth
-  1: 'aa',  2: 'aa',  3: 'ih',  4: 'ee',  5: 'oh',
-  6: 'ou',  7: 'ou',  8: 'ee',  9: 'ih', 10: 'oh',
-  11: 'ou', 12: 'aa', 13: 'ee', 14: 'ih', 15: 'oh',
-  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh',
-  21: 'joy' // fallback for unknown ID
-};
-
 
 // Aliases for common VRM/VRM0 vowel presets
 const vowelAliases = {
@@ -479,7 +511,6 @@ function maskMouthShapesWhileSpeaking(mgr) {
 
 /* Prevent overlapping TTS calls with abort */
 let ttsInflight = false;
-let isSpeaking = false;
 let ttsAbortController = null;
 
 // Track last viseme (mapped to VRM expression name)
@@ -787,73 +818,24 @@ if (document.readyState === 'loading') {
   initUI();
 }
 
-/* === Animation loop === */
+// ————— Animation loop —————
 function animate() {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta();
-  const t = clock.getElapsedTime();
-
-  if (currentVRM) {
-    currentVRM.update(dt);
-
-    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
-
-    // default neutral "happy" expression (ambient idle)
-    if (!isSpeaking && Object.keys(activeExpr).length === 0) {
-      mgr.setValue('happy', 1.0);
-      mgr.setValue('neutral', 0.0);
-    }
-
-    // spine sway
-    const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
-    if (spine) {
-      spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-    } else {
-      let fallbackSpine = vrm.scene.getObjectByName('Spine');
-      if (fallbackSpine) {
-        fallbackSpine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-        console.log('[Sway] Fell back to raw Spine bone');
-      } else {
-        console.warn('[Ambient] No spine bone found (normalized or raw)');
-      }
-    }
-
-    // 1) expressions/visemes
-    applyExpressions(dt);
-
-    // 🔹 Ensure mouth is not overridden by expressions while speaking
-    if (isSpeaking && mgr) {
-      maskMouthShapesWhileSpeaking(mgr);
-      // 🔹 Re‑apply the most recent viseme so it persists between events
-      if (currentVisemeName) {
-        mgr.setValue(currentVisemeName, currentVisemeWeight);
-      }
-    }
-
-    if (shouldUseBlendfaces()) blendfaces.update(dt);
-
-        function render(delta, t) {
-      if (!vrmReady) return;
-
-      if (shouldUseBlendfaces() && blendfaces) {
-        blendfaces.update(delta); // REQUIRED for its timeline
-      } else {
-        applyExpressions(delta);  // Your manual path below
-      }
-    }
-
-    // 2) ambient: breathe → gaze → blink
-    handleBreath(t);
-    handleGaze(dt);
-    handleBlink(dt);
-  } else {
-    console.warn('[Animate] No currentVRM');
-  }
-
+  const dt = clock.getDelta(), t = clock.getElapsedTime();
   controls.update();
-  renderer.render(scene, camera);
+  if (!currentVRM) return;
+
+  currentVRM.update(dt);
+  applyExpressions(dt);
+  handleBreath(t);
+  handleGaze(dt);
+  handleBlink(dt);
+  if (blendfaces) blendfaces.update(dt);
+
+  renderer.render(scene,camera);
 }
 animate();
+
 
 /* === Window resize handler === */
 window.addEventListener('resize', () => {
