@@ -174,7 +174,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return false; // Temporarily disable blendfaces to test scheduleVisemes
+  return false; // Keep disabled until blendfaces is fixed
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -306,9 +306,9 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
-    smooth: 0.8, // Increased to reduce smoothing
-    decay: 0.5,  // Decreased to reduce decay
-    rest: { blink: 0.0 }
+    smooth: 0.9, // Very snappy to minimize smoothing
+    decay: 0,    // No decay for visemes
+    rest: { blink: 0.0 } // Removed neutral to avoid override
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
 
@@ -383,7 +383,7 @@ function scheduleVisemes(visemes, audio) {
       setTimeout(() => {
         mgr.setValue(key, 0.0);
         mgr.update();
-      }, 120);
+      }, 200); // Increased TTL
     }, Math.max(0, t * 1000));
   });
 

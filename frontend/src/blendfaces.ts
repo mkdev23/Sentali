@@ -6,7 +6,7 @@ type Source = 'rest' | 'timeline' | 'live';
 type Cue =
   | { type: 'blendshape'; name: string; weight: number }
   | { type: 'blendshapes'; values: Record<string, number> }
-  | { type: 'viseme'; name: string; weight: number }; // e.g., aa, ih, oh
+  | { type: 'viseme'; name: string; weight: number };
 
 type TimelineKey =
   | { t: number; name: string; weight: number }
@@ -26,10 +26,7 @@ export class BlendfacesController {
   private decay: number;
   private rest: Record<string, number>;
 
-  // state[name] = { current, target, source, ttl }
   private state = new Map<string, { current: number; target: number; source: Source; ttl: number }>();
-
-  // timeline
   private timeline: TimelineKey[] = [];
   private tlIndex = 0;
   private tlStart = 0;
@@ -40,13 +37,12 @@ export class BlendfacesController {
     this.map = opts.expressionMap ?? {};
     this.smooth = opts.smooth ?? 0.25;
     this.decay = opts.decay ?? 2.0;
-    this.rest = opts.rest ?? { blink: 0.0, neutral: 1.0 };
+    this.rest = opts.rest ?? { blink: 0.0 };
 
-    // seed rest values
+    // Seed rest values
     Object.entries(this.rest).forEach(([raw, w]) => this.set(raw, w, 'rest'));
   }
 
-  // Public API
   set(rawName: string, weight: number, source: Source = 'live', ttlMs = 150): void {
     const name = this.map[rawName.toLowerCase()] ?? rawName;
     const s = this.state.get(name) ?? { current: 0, target: 0, source: 'rest', ttl: 0 };
@@ -55,13 +51,17 @@ export class BlendfacesController {
     if (prio(source) >= prio(s.source)) {
       s.target = weight;
       s.source = source;
-      s.ttl = ttlMs;
+      s.ttl = ['aa', 'ee', 'ih', 'oh', 'ou'].includes(name) ? 500 : ttlMs; // Longer TTL for visemes
       this.state.set(name, s);
     }
   }
 
   setMany(values: Record<string, number>, source: Source = 'live', ttlMs = 150): void {
-    Object.entries(values).forEach(([k, v]) => this.set(k, v, source, ttlMs));
+    Object.entries(values).forEach(([k, v]) => {
+      // Increase TTL for visemes
+      const ttl = ['aa', 'ee', 'ih', 'oh', 'ou'].includes(this.map[k.toLowerCase()] ?? k) ? 500 : ttlMs;
+      this.set(k, v, source, ttl);
+    });
   }
 
   attachWS(onMessage: (cb: (cue: Cue) => void) => void): void {
@@ -75,52 +75,59 @@ export class BlendfacesController {
   loadTimeline(keys: TimelineKey[]): void {
     this.timeline = [...keys].sort((a, b) => a.t - b.t);
     this.tlIndex = 0;
+    console.log('[Blendfaces] Loaded timeline:', this.timeline);
   }
 
   playTimeline(startTime = 0, audio?: HTMLAudioElement): void {
     this.tlStart = performance.now() / 1000 - startTime;
     this.tlAudio = audio;
+    console.log('[Blendfaces] Playing timeline at startTime:', startTime);
   }
 
   stopTimeline(): void {
     this.timeline = [];
     this.tlIndex = 0;
     this.tlAudio = undefined;
+    console.log('[Blendfaces] Timeline stopped');
   }
 
-  // Call each frame with delta seconds
   update(delta: number): void {
     // 1) Advance timeline
     if (this.timeline.length) {
       const now = this.tlAudio ? this.tlAudio.currentTime : performance.now() / 1000 - this.tlStart;
       while (this.tlIndex < this.timeline.length && this.timeline[this.tlIndex].t <= now) {
         const k = this.timeline[this.tlIndex++];
-        if ('name' in k) this.set(k.name, k.weight, 'timeline', 120);
-        else this.setMany(k.values, 'timeline', 120);
+        if ('name' in k) this.set(k.name, k.weight, 'timeline', 500); // Longer TTL for visemes
+        else this.setMany(k.values, 'timeline', 500);
+        console.log(`[Blendfaces] Applied timeline key at t=${k.t}:`, k);
       }
     }
 
-    // 2) Decay TTL and blend toward targets
+    // 2) Update blend-shapes
     for (const [name, s] of this.state) {
       s.ttl -= delta * 1000;
       if (s.ttl <= 0 && s.source !== 'rest') {
-        // fall back to rest target
         s.target = this.rest[name] ?? 0;
         s.source = 'rest';
       }
 
-      // smooth blend
-      const alpha = 1 - Math.pow(1 - this.smooth, delta * 60); // framerate-compensated
-      const decayed = s.current + (s.target - s.current) * alpha;
+      // Skip decay for visemes during speaking
+      const isViseme = ['aa', 'ee', 'ih', 'oh', 'ou'].includes(name);
+      const alpha = 1 - Math.pow(1 - this.smooth, delta * 60);
+      let decayed = s.current + (s.target - s.current) * alpha;
 
-      // gentle auto-decay per second toward rest even if target lagging
-      const restTarget = this.rest[name] ?? 0;
-      const towardRest = decayed + (restTarget - decayed) * Math.min(1, this.decay * delta);
+      // Apply decay only for non-visemes or when not speaking
+      if (!isViseme || !this.tlAudio?.currentTime) {
+        const restTarget = this.rest[name] ?? 0;
+        decayed += (restTarget - decayed) * Math.min(1, this.decay * delta);
+      }
 
-      s.current = Math.max(0, Math.min(1, Math.max(decayed, towardRest))); // clamp [0,1]
+      s.current = Math.max(0, Math.min(1, decayed)); // Clamp [0,1]
       this.state.set(name, s);
 
-      // push to VRM
+      console.log(`[Blendfaces Update] ${name}: target=${s.target}, current=${s.current}, source=${s.source}, ttl=${s.ttl}`);
+
+      // Push to VRM
       if ((this.vrm as any).expressionManager) {
         (this.vrm as any).expressionManager.setValue(name, s.current);
       } else if ((this.vrm as any).blendShapeProxy) {
