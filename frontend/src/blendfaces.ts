@@ -1,4 +1,4 @@
-// src/blendfaces.ts
+// blendfaces.ts
 import { VRM } from '@pixiv/three-vrm';
 import { BlendshapeController } from './BlendShapeController';
 
@@ -33,7 +33,7 @@ export type BlendfacesOptions = {
 
 export class BlendfacesController {
   private vrm: VRM;
-  private map: Map<string, number>; // Changed to Map for BlendshapeController
+  private readonly map: Map<string, string>; // Changed to Map<string, string>
   private smooth: number;
   private decay: number;
   private rest: Record<string, number>;
@@ -47,20 +47,21 @@ export class BlendfacesController {
 
   constructor(vrm: VRM, opts: BlendfacesOptions = {}) {
     this.vrm = vrm;
-    this.map = new Map(Object.entries(opts.expressionMap || {}).map(([k, v], i) => [k.toLowerCase(), i])); // Convert to Map with indices
+    this.map = new Map(Object.entries(opts.expressionMap || {}).map(([k, v]) => [k.toLowerCase(), v])); // Convert to Map<string, string>
     this.smooth = opts.smooth ?? 0.25;
     this.decay = opts.decay ?? 2.0;
-    this.rest = opts.rest ?? { blink: 0.0 }; // Removed neutral from rest
-    this.blendshapeController = new BlendshapeController(this.map);
+    this.rest = opts.rest ?? { blink: 0.0 };
+    this.blendshapeController = new BlendshapeController(this.map as unknown as any); // Now this.map is Map<string, string>, cast to any to satisfy constructor type
 
     // Seed rest values
     Object.entries(this.rest).forEach(([raw, w]) => this.set(raw, w, 'rest'));
   }
 
   set(rawName: string, weight: number, source: Source = 'live', ttlMs = 150): void {
-    const normalizedName = this.blendshapeController.has(rawName.toLowerCase())
-      ? rawName.toLowerCase()
-      : rawName; // Use rawName if not in map, relying on blendshapeController
+    const lowerName = rawName.toLowerCase();
+    const normalizedName = this.blendshapeController.has(lowerName)
+      ? lowerName
+      : this.map.get(lowerName) ?? rawName; // this.map.get returns string | undefined
     const s = this.state.get(normalizedName) ?? { current: 0, target: 0, source: 'rest', ttl: 0 };
     s.target = Math.max(0, Math.min(1, weight)); // Clamp [0,1]
     s.source = source;
@@ -136,11 +137,7 @@ export class BlendfacesController {
       console.log(`[Blendfaces Update] ${name}: target=${s.target}, current=${s.current}, source=${s.source}, ttl=${s.ttl}`);
 
       const mgr = this.vrm.blendShapeProxy || this.vrm.expressionManager;
-      if (mgr) {
-        const currentValue = mgr.getValue ? mgr.getValue(name) : 0;
-        console.log(`[Blendfaces Debug] Applying ${name} to VRM, current=${currentValue}, new=${s.current}`);
-        mgr.setValue(name, s.current);
-      }
+      if (mgr) mgr.setValue(name, s.current);
     }
 
     // Apply changes
