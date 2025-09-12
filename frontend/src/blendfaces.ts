@@ -1,5 +1,16 @@
 // src/blendfaces.ts
 import { VRM } from '@pixiv/three-vrm';
+import { BlendshapeController } from './BlendShapeController';
+
+// Extend VRM interface to include blendShapeProxy for VRM0
+declare module '@pixiv/three-vrm' {
+  interface VRM {
+    blendShapeProxy?: {
+      setValue(name: string, weight: number): void;
+      update(): void;
+    };
+  }
+}
 
 type Source = 'rest' | 'timeline' | 'live';
 
@@ -21,10 +32,11 @@ export type BlendfacesOptions = {
 
 export class BlendfacesController {
   private vrm: VRM;
-  private map: Record<string, string>;
+  private map: Map<string, number>; // Changed to Map for BlendshapeController
   private smooth: number;
   private decay: number;
   private rest: Record<string, number>;
+  private blendshapeController: BlendshapeController;
 
   private state = new Map<string, { current: number; target: number; source: Source; ttl: number }>();
   private timeline: TimelineKey[] = [];
@@ -34,23 +46,26 @@ export class BlendfacesController {
 
   constructor(vrm: VRM, opts: BlendfacesOptions = {}) {
     this.vrm = vrm;
-    this.map = opts.expressionMap ?? {};
+    this.map = new Map(Object.entries(opts.expressionMap || {}).map(([k, v], i) => [k.toLowerCase(), i])); // Convert to Map with indices
     this.smooth = opts.smooth ?? 0.25;
     this.decay = opts.decay ?? 2.0;
     this.rest = opts.rest ?? { blink: 0.0 };
+    this.blendshapeController = new BlendshapeController(this.map);
 
     // Seed rest values
     Object.entries(this.rest).forEach(([raw, w]) => this.set(raw, w, 'rest'));
   }
 
   set(rawName: string, weight: number, source: Source = 'live', ttlMs = 150): void {
-    const name = this.map[rawName.toLowerCase()] ?? rawName;
-    const s = this.state.get(name) ?? { current: 0, target: 0, source: 'rest', ttl: 0 };
+    const normalizedName = this.blendshapeController.getBlendshapeIndex(rawName.toLowerCase()) >= 0
+      ? rawName.toLowerCase()
+      : rawName; // Use raw if not in map, fallback to original logic
+    const s = this.state.get(normalizedName) ?? { current: 0, target: 0, source: 'rest', ttl: 0 };
     s.target = Math.max(0, Math.min(1, weight)); // Clamp [0,1]
     s.source = source;
     s.ttl = ttlMs;
-    this.state.set(name, s);
-    console.log(`[Blendfaces] Set ${name} to ${weight} from ${source}, ttl=${ttlMs}ms`);
+    this.state.set(normalizedName, s);
+    console.log(`[Blendfaces] Set ${normalizedName} to ${weight} from ${source}, ttl=${ttlMs}ms`);
   }
 
   setMany(values: Record<string, number>, source: Source = 'live', ttlMs = 150): void {
@@ -73,27 +88,31 @@ export class BlendfacesController {
   }
 
   attachWS(callback: (data: Cue) => void): void {
-    // Placeholder for WebSocket integration; implement as needed
     console.log('[Blendfaces] WS handler attached');
   }
 
   update(delta: number): void {
     if (!this.vrm || (!this.timeline.length && !this.state.size)) return;
 
-    // 1) Advance timeline if audio is playing
+    // Reset tlStart if audio restarts to avoid drift
+    if (this.tlAudio && !this.tlAudio.paused && this.tlAudio.currentTime < 0.1) {
+      this.tlStart = performance.now() / 1000 - this.tlAudio.currentTime;
+    }
+
+    // Advance timeline if audio is playing
     if (this.tlAudio && !this.tlAudio.paused && this.tlAudio.currentTime >= 0) {
       const now = performance.now() / 1000;
       const elapsed = now - this.tlStart;
 
       while (this.tlIndex < this.timeline.length && this.timeline[this.tlIndex].t <= elapsed) {
         const k = this.timeline[this.tlIndex++];
-        if ('name' in k) this.set(k.name, k.weight, 'timeline', 500); // Longer TTL for visemes
+        if ('name' in k) this.set(k.name, k.weight, 'timeline', 500);
         else this.setMany(k.values, 'timeline', 500);
         console.log(`[Blendfaces] Applied timeline key at t=${k.t}:`, k);
       }
     }
 
-    // 2) Update blend-shapes
+    // Update blend-shapes
     for (const [name, s] of this.state) {
       s.ttl -= delta * 1000;
       if (s.ttl <= 0 && s.source !== 'rest') {
@@ -101,35 +120,26 @@ export class BlendfacesController {
         s.source = 'rest';
       }
 
-      // Skip decay for visemes during speaking
       const isViseme = ['aa', 'ee', 'ih', 'oh', 'ou'].includes(name.toLowerCase());
       const alpha = 1 - Math.pow(1 - this.smooth, delta * 60);
       let decayed = s.current + (s.target - s.current) * alpha;
 
-      // Apply decay only for non-visemes or when not speaking
       if (!isViseme || !this.tlAudio?.currentTime) {
         const restTarget = this.rest[name] ?? 0;
         decayed += (restTarget - decayed) * Math.min(1, this.decay * delta);
       }
 
-      s.current = Math.max(0, Math.min(1, decayed)); // Clamp [0,1]
+      s.current = Math.max(0, Math.min(1, decayed));
       this.state.set(name, s);
 
       console.log(`[Blendfaces Update] ${name}: target=${s.target}, current=${s.current}, source=${s.source}, ttl=${s.ttl}`);
 
-      // Push to VRM
-      if ((this.vrm as any).expressionManager) {
-        (this.vrm as any).expressionManager.setValue(name, s.current);
-      } else if ((this.vrm as any).blendShapeProxy) {
-        (this.vrm as any).blendShapeProxy.setValue(name, s.current);
-      }
+      const mgr = this.vrm.blendShapeProxy || this.vrm.expressionManager;
+      if (mgr) mgr.setValue(name, s.current);
     }
 
-    // 3) Apply changes
-    if ((this.vrm as any).expressionManager) {
-      (this.vrm as any).expressionManager.update();
-    } else if ((this.vrm as any).blendShapeProxy) {
-      (this.vrm as any).blendShapeProxy.update();
-    }
+    // Apply changes
+    const mgr = this.vrm.blendShapeProxy || this.vrm.expressionManager;
+    if (mgr) mgr.update();
   }
 }

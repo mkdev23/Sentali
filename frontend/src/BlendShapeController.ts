@@ -66,7 +66,6 @@ function normalizeKey(k: string): string | null {
 }
 
 function toIndex(v: unknown): number {
-  // Clamp to non-negative integer, -1 reserved for "not found"
   const n = Number(v);
   if (!Number.isFinite(n)) return -1;
   const i = Math.floor(n);
@@ -78,3 +77,5 @@ function isPlainObject(o: unknown): o is Record<string, unknown> {
   const proto = Object.getPrototypeOf(o);
   return proto === Object.prototype || proto === null;
 }
+
+// Note: Ensure this file is included in tsconfig.json under "files" or "include"
