@@ -1,38 +1,35 @@
 // vrmMapping.ts
 import { VRMExpressionPresetName } from '@pixiv/three-vrm';
 
-// vrmMapping.ts
 // Centralised mapping for WS → VRM shapekey names from your Blender export
-// Expanded to cover all your model's blendshapes; backend outputs remapped here
-
 export const expressionMap = {
   // Emotions (map presets/sentiment to your model's exact names)
-  joy: 'happy',        // Positive → happy
-  angry: 'angry',      // Negative → angry
-  sorrow: 'sad',       // Mild negative → sad
-  neutral: 'neutral',  // Default/neutral
-  fun: 'relaxed',      // Mild positive → relaxed (or 'happy')
-  surprised: 'surprised', // Mixed/uncertain → surprised
+  joy: 'joy',
+  angry: 'angry',
+  sorrow: 'sorrow',
+  neutral: 'neutral',
+  fun: 'fun',
+  surprised: 'surprised',
 
-  // Visemes (Azure phoneme → VRM shapekey; direct matches)
-  aa: 'A',
-  ee: 'E',
-  ih: 'I',
-  oh: 'O',
-  ou: 'U',
+  // Visemes (Azure phoneme → VRM shapekey; match model’s names)
+  aa: 'aa',
+  ee: 'ee',
+  ih: 'ih',
+  oh: 'oh',
+  ou: 'ou',
 
   // Blinks (direct)
   blink: 'blink',
-  blinkleft: 'blinkLeft',
-  blinkright: 'blinkRight',
+  blinkleft: 'blinkleft',
+  blinkright: 'blinkright',
 
   // Look directions (for gaze expansion if needed; currently bone-based)
-  lookdown: 'lookDown',
-  lookleft: 'lookLeft',
-  lookright: 'lookRight',
-  lookup: 'lookUp',
+  lookdown: 'lookdown',
+  lookleft: 'lookleft',
+  lookright: 'lookright',
+  lookup: 'lookup',
 
-  // Other model-specific (if backend/WS sends these)
-  infinity: 'infinity',  // Unused, but available
-  irisbake: 'irisBake'   // Unused, perhaps eye-related
+  // Other model-specific
+  infinity: 'infinity',
+  irisbake: 'irisbake'
 };

@@ -142,6 +142,10 @@ const SMOOTH = 0.4;
 
 function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
   const mapped = expressionMap[name] ?? name;
+  const mgr = getMgr();
+  if (mgr && mgr.getValue(mapped) === undefined) {
+    console.warn(`[setExpressionPersistent] Expression ${mapped} not found on VRM model`);
+  }
   activeExpr[mapped] = { weight, decay };
 }
 
@@ -158,7 +162,11 @@ function applyExpressions(delta) {
     }
     const curr = mgr.getValue(m) || 0;
     const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
-    mgr.setValue(m, blend);
+    if (mgr.getValue(m) === undefined) {
+      console.warn(`[applyExpressions] Expression ${m} not found on VRM model`);
+    } else {
+      mgr.setValue(m, blend);
+    }
   }
   mgr.update();
 }
@@ -229,12 +237,14 @@ function handleBlink(delta) {
       blendfaces.set('blink', 1.0, 'live', 150);
     } else {
       const mgr = getMgr();
-      mgr.setValue('blink', 1.0);
-      mgr.update();
-      setTimeout(() => {
-        mgr.setValue('blink', 0.0);
+      if (mgr) {
+        mgr.setValue('blink', 1.0);
         mgr.update();
-      }, 150);
+        setTimeout(() => {
+          mgr.setValue('blink', 0.0);
+          mgr.update();
+        }, 150);
+      }
     }
     blinkTimer = 2 + Math.random() * 3;
   }
@@ -246,9 +256,9 @@ function handleGaze(delta) {
     gazeDirection = (Math.random() - 0.5) * 0.2;
     gazeTimer = 2 + Math.random() * 2;
   }
-  let head = currentVRM.humanoid.getNormalizedBoneNode('head');
+  let head = currentVRM?.humanoid.getNormalizedBoneNode('head');
   if (!head) {
-    head = currentVRM.scene.getObjectByName('Head');
+    head = currentVRM?.scene.getObjectByName('Head');
   }
   if (head) {
     head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
@@ -256,12 +266,12 @@ function handleGaze(delta) {
 }
 
 function handleBreath(t) {
-  let chest = currentVRM.humanoid.getNormalizedBoneNode('chest');
+  let chest = currentVRM?.humanoid.getNormalizedBoneNode('chest');
   if (!chest) {
-    chest = currentVRM.humanoid.getNormalizedBoneNode('upper_chest');
+    chest = currentVRM?.humanoid.getNormalizedBoneNode('upper_chest');
   }
   if (!chest) {
-    chest = currentVRM.scene.getObjectByName('Spine1') || currentVRM.scene.getObjectByName('Spine2');
+    chest = currentVRM?.scene.getObjectByName('Spine1') || currentVRM?.scene.getObjectByName('Spine2');
   }
   if (chest) {
     chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
@@ -306,12 +316,15 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 
   // Sanity test for mouth shapes
   if (vrmReady) {
-    ['A', 'E', 'I', 'O', 'U'].forEach((k, i) => {
+    ['aa', 'ee', 'ih', 'oh', 'ou'].forEach((k, i) => {
       setTimeout(() => {
         exprMgr.setValue(k, 1.0);
         exprMgr.update();
-        console.log('Set', k);
-        setTimeout(() => { exprMgr.setValue(k, 0.0); exprMgr.update(); }, 300);
+        console.log(`[Sanity Test] Set ${k} to 1.0 (exists: ${exprMgr.getValue(k) !== undefined})`);
+        setTimeout(() => {
+          exprMgr.setValue(k, 0.0);
+          exprMgr.update();
+        }, 300);
       }, i * 600);
     });
   }
@@ -324,7 +337,7 @@ function testVRM0MouthShapes() {
     return;
   }
 
-  const presets = ['A', 'I', 'U', 'E', 'O'];
+  const presets = ['aa', 'ee', 'ih', 'oh', 'ou'];
   let i = 0;
 
   function next() {
@@ -334,7 +347,7 @@ function testVRM0MouthShapes() {
       return;
     }
     const key = presets[i];
-    console.log(`Setting ${key} to 1.0`);
+    console.log(`[Test] Setting ${key} to 1.0 (exists: ${mgr.getValue(key) !== undefined})`);
     mgr.setValue(key, 1.0);
     mgr.update();
     i++;
@@ -359,6 +372,9 @@ function scheduleVisemes(visemes, audio) {
 
   keys.forEach(({ t, key }) => {
     setTimeout(() => {
+      if (mgr.getValue(key) === undefined) {
+        console.warn(`[Viseme] Key ${key} not found on VRM model`);
+      }
       mgr.setValue(key, 1.0);
       mgr.update();
       console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms`);
@@ -399,27 +415,38 @@ function resolveToVRMKey(viseme) {
     console.warn(`[resolveToVRMKey] No alias for viseme:`, viseme);
     return null;
   }
+  // Check if the alias is a valid VRM expression
+  const mgr = getMgr();
+  if (mgr && mgr.getValue(alias) !== undefined) {
+    return alias; // Use the alias directly if it exists on the model
+  }
   const key = expressionMap[alias];
-  if (key) return key;
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[alias];
-  if (fallback) return fallback;
-  console.warn(`[resolveToVRMKey] No VRM key for alias: ${alias}`);
+  if (key && mgr && mgr.getValue(key) !== undefined) {
+    return key;
+  }
+  const fallback = { aa: 'aa', ee: 'ee', ih: 'ih', oh: 'oh', ou: 'ou' }[alias];
+  if (fallback && mgr && mgr.getValue(fallback) !== undefined) {
+    return fallback;
+  }
+  console.warn(`[resolveToVRMKey] No valid VRM key for alias: ${alias}`);
   return null;
 }
 
 function resolveMouth(name) {
   const candidates = vowelAliases[name] || [name];
-  const available = new Set(Object.values(expressionMap));
+  const mgr = getMgr();
   for (const c of candidates) {
-    if (available.has(c)) {
-      return expressionMap[c] || c;
+    if (mgr && mgr.getValue(c) !== undefined) {
+      return c;
     }
   }
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
-  if (fallback && available.has(fallback)) {
+  const fallback = { aa: 'aa', ee: 'ee', ih: 'ih', oh: 'oh', ou: 'ou' }[name];
+  if (fallback && mgr && mgr.getValue(fallback) !== undefined) {
     return fallback;
   }
-  if (name === 'neutral' && available.has('neutral')) return 'neutral';
+  if (name === 'neutral' && mgr && mgr.getValue('neutral') !== undefined) {
+    return 'neutral';
+  }
   console.warn(`[resolveMouth] No valid VRM key for: ${name}`);
   return null;
 }
@@ -446,7 +473,9 @@ function maskMouthShapesWhileSpeaking(mgr) {
   for (const key of Object.keys(expressionMap || {})) {
     if (mouthSet.has(key)) {
       const mapped = expressionMap[key] ?? key;
-      mgr.setValue(mapped, 0.0);
+      if (mgr.getValue(mapped) !== undefined) {
+        mgr.setValue(mapped, 0.0);
+      }
     }
   }
 }
@@ -545,7 +574,9 @@ async function speakAndType(text, agentDiv) {
       if (mgr) {
         for (const key of mouthSet) {
           const mapped = expressionMap[key] ?? key;
-          if ((expressionMap || {})[key] !== undefined) mgr.setValue(mapped, 0.0);
+          if (mgr.getValue(mapped) !== undefined) {
+            mgr.setValue(mapped, 0.0);
+          }
         }
         mgr.update();
       }
@@ -740,8 +771,12 @@ function animate() {
     const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
 
     if (!isSpeaking && Object.keys(activeExpr).length === 0) {
-      mgr.setValue('happy', 1.0);
-      mgr.setValue('neutral', 0.0);
+      if (mgr.getValue('happy') !== undefined) {
+        mgr.setValue('happy', 1.0);
+      }
+      if (mgr.getValue('neutral') !== undefined) {
+        mgr.setValue('neutral', 0.0);
+      }
     }
 
     const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
@@ -761,7 +796,7 @@ function animate() {
 
     if (isSpeaking && mgr) {
       maskMouthShapesWhileSpeaking(mgr);
-      if (currentVisemeName) {
+      if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
         mgr.setValue(currentVisemeName, currentVisemeWeight);
       }
     }
