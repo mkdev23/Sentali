@@ -279,7 +279,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   const mgr = vrm.expressionManager || vrm.blendShapeProxy;
   if (mgr) {
     // Fallback for getExpressionNames not supported (e.g., VRM0)
-    const expressions = mgr.getBlendShapeNames ? mgr.getBlendShapeNames() : [];
+    const expressions = mgr.getExpressionNames ? mgr.getExpressionNames() : mgr.getBlendShapeNames ? mgr.getBlendShapeNames() : [];
     console.log('[VRM] Expressions:', expressions);
   }
 });
@@ -303,6 +303,7 @@ const vowelAliases = {
 
 // Resolve to a mouth expression that actually exists in your VRM/expressionMap
 function resolveMouth(name) {
+  if (!name) return 'neutral'; // Handle undefined/null src
   const candidates = vowelAliases[name] || [name];
   const available = new Set(Object.keys(expressionMap || {}));
   for (const c of candidates) {
@@ -584,14 +585,6 @@ function animate() {
 
     // Expressions/visemes
     applyExpressions(dt);
-
-    // Re-apply last viseme during speech to prevent neutral flicker
-    if (isSpeaking && mgr && currentVisemeName) {
-      mgr.setValue(currentVisemeName, currentVisemeWeight);
-      mgr.update();
-      console.log('[Viseme] Re-applying', currentVisemeName, 'with weight', currentVisemeWeight);
-    }
-
     if (shouldUseBlendfaces()) blendfaces.update(dt);
 
     // Ambient: breathe → gaze → blink
