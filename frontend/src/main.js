@@ -390,22 +390,6 @@ function resolveMouth(name) {
 }
 
 
-
-  
-
-  // Single-letter VRM0 fallback
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
-  if (fallback && available.has(fallback)) return fallback;
-
-  // If neutral is mapped in your model, allow it; otherwise skip
-  if (name === 'neutral' && available.has('neutral')) return 'neutral';
-
-  console.warn('[Viseme] No matching VRM0 mouth for', name);
-  return null;
-
-
-
-
 /* 🔹 Mouth alias list and set */
 const mouthAliasList = [
   ...vowelAliases.aa, ...vowelAliases.ee, ...vowelAliases.ih, ...vowelAliases.oh, ...vowelAliases.ou,

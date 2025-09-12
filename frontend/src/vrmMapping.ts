@@ -15,11 +15,11 @@ export const expressionMap = {
   surprised: 'surprised', // Mixed/uncertain → surprised
 
   // Visemes (Azure phoneme → VRM shapekey; direct matches)
-  aa: 'aa',
-  ee: 'ee',
-  ih: 'ih',
-  oh: 'oh',
-  ou: 'ou',
+  aa: 'A',
+  ee: 'E',
+  ih: 'I',
+  oh: 'O',
+  ou: 'U',
 
   // Blinks (direct)
   blink: 'blink',
