@@ -96,6 +96,5 @@ namespace SentaliApp.Services
 
             return (audioBytes, visemes);
         }
-
     }
 }
