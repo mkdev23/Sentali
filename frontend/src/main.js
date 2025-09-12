@@ -55,6 +55,20 @@ let blendfaces;
 let blendfacesWSHandler = null;
 const clock = new THREE.Clock();
 
+let exprMgr = null;        // VRM 0.x: blendShapeProxy; VRM 1.x: expressionManager
+let vrmReady = false;
+
+function isVRM0() {
+  return !!(currentVRM && currentVRM.blendShapeProxy && !currentVRM.expressionManager);
+}
+
+function getMgr() {
+  return exprMgr || (currentVRM?.expressionManager || currentVRM?.blendShapeProxy) || null;
+}
+
+
+
+
 // Mobile detection
 function isMobile() {
   return /Mobi|Android/i.test(navigator.userAgent);
@@ -138,8 +152,10 @@ function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
 }
 
 function applyExpressions(delta) {
-  if (!currentVRM) return;
-  const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+  if (!vrmReady) return;
+  const mgr = getMgr();
+  if (!mgr) return;
+
   for (const [m, st] of Object.entries(activeExpr)) {
     st.weight = THREE.MathUtils.lerp(st.weight, 0, st.decay * delta);
     if (st.weight < 0.01) {
@@ -150,9 +166,8 @@ function applyExpressions(delta) {
     const blend = THREE.MathUtils.lerp(curr, st.weight, SMOOTH);
     mgr.setValue(m, blend);
   }
-  mgr.update();
+  mgr.update(); // commit all changes
 }
-
 function shouldUseBlendfaces() {
   return !!blendfaces;
 }
@@ -222,7 +237,7 @@ let gazeDirection = 0;
 function handleBlink(delta) {
   blinkTimer -= delta;
   if (blinkTimer <= 0) {
-    const mgr = currentVRM.expressionManager || currentVRM.blendShapeProxy;
+    
     if (shouldUseBlendfaces()) {
       blendfaces.set('blink', 1.0, 'live', 150);
     } else {
@@ -278,6 +293,9 @@ function initAvatar(vrm) {
 
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
+  exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
+  vrmReady = !!exprMgr;
+
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
 
@@ -290,25 +308,25 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     expressionMap,
     smooth: 0.3,
     decay: 1.5,
-    rest: { blink: 0.0, neutral: 1.0 }
+    // If your model doesn't have a 'neutral' clip, remove it from rest
+    rest: { blink: 0.0 } // neutral: 1.0 removed
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
+
   console.log('[VRM] Loaded successfully');
   console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
-  const mgr = vrm.expressionManager || vrm.blendShapeProxy;
-  if (mgr?.getExpressionNames) {
-    console.log('[VRM] Expressions available in manager:', mgr.getExpressionNames());
-  }
-});
 
-const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-['A','E','I','O','U'].forEach((k, i) => {
-  setTimeout(() => {
-    mgr.setValue(k, 1.0);
-    mgr.update();
-    console.log('Set', k);
-    setTimeout(() => { mgr.setValue(k, 0.0); mgr.update(); }, 300);
-  }, i * 600);
+  // Sanity test ONLY after exprMgr is valid
+  if (vrmReady) {
+    ['A','E','I','O','U'].forEach((k, i) => {
+      setTimeout(() => {
+        exprMgr.setValue(k, 1.0);
+        exprMgr.update();
+        console.log('Set', k);
+        setTimeout(() => { exprMgr.setValue(k, 0.0); exprMgr.update(); }, 300);
+      }, i * 600);
+    });
+  }
 });
 
 function testVRM0MouthShapes() {
@@ -344,6 +362,35 @@ testVRM0MouthShapes();
 
 
 
+function scheduleVisemes(visemes, audio) {
+  if (!vrmReady) return;
+  const mgr = getMgr();
+  if (!mgr) return;
+
+  const keys = visemes
+    .slice()
+    .sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0))
+    .map(mapViseme)
+    .filter(Boolean);
+
+  keys.forEach(({ t, key }) => {
+    setTimeout(() => {
+      mgr.setValue(key, 1.0);
+      mgr.update();
+      // decay back down shortly after
+      setTimeout(() => {
+        mgr.setValue(key, 0.0);
+        mgr.update();
+      }, 120);
+    }, Math.max(0, t * 1000));
+  });
+
+  if (audio) audio.play().catch(() => {});
+}
+
+
+
+
 
 
 /* Viseme ID map from backend */
@@ -367,35 +414,52 @@ const vowelAliases = {
   ou: ['ou', 'U', 'vrc.v_ou', 'vowel_U']
 };
 
+const expressionMap = {
+  aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U',
+  // Only keep neutral if your VRM actually has it:
+   neutral: 'neutral'
+};
+
+
+
 // Resolve to a mouth expression that actually exists in your VRM/expressionMap
 function resolveMouth(name) {
   const candidates = vowelAliases[name] || [name];
-  const available = new Set(Object.values(expressionMap || {})); // actual VRM keys
+  const available = new Set(Object.values(expressionMap)); // 'A','E','I','O','U', maybe 'neutral'
 
-  // Try aliases first
   for (const c of candidates) {
     if (available.has(c)) {
-      // Find the alias key in expressionMap that maps to this VRM key
       const aliasKey = Object.keys(expressionMap).find(k => expressionMap[k] === c);
       return aliasKey || name;
     }
   }
-
-  // Single-letter VRM0 fallback
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
+  const fallback = { aa:'A', ee:'E', ih:'I', oh:'O', ou:'U' }[name];
   if (fallback && available.has(fallback)) {
     const aliasKey = Object.keys(expressionMap).find(k => expressionMap[k] === fallback);
     return aliasKey || name;
   }
+  if (name === 'neutral' && available.has('neutral')) return 'neutral';
+  return null;
+}
 
-  // Neutral only if it exists
-  if (name === 'neutral' && available.has('neutral')) {
-    return 'neutral';
-  }
+function mapViseme(v) {
+  const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
+  const src = id != null ? visemeMap[id] : (v.name ?? null);
+  if (!src) return null;
+
+  const alias = resolveMouth(src);      // 'aa' etc.
+  if (!alias) return null;
+
+  const mapped = expressionMap[alias] ?? alias; // 'A','E',...
+  if (mapped === 'neutral' && !expressionMap.neutral) return null; // skip silence if no neutral
+  return { t: (v.timeMs ?? 0) / 1000, key: mapped };
+}
+
+
 
   console.warn('[Viseme] No matching VRM0 mouth for', name);
   return null;
-}
+
 
 
 /* 🔹 Mouth alias list and set */
@@ -489,6 +553,24 @@ async function speakAndType(text, agentDiv) {
     audio.addEventListener('play', () => {
       isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
+      // Decide which viseme driver to use
+          if (shouldUseBlendfaces() && blendfaces) {
+            // Blendfaces timeline branch
+           const items = visemes
+             .map(v => {
+               const m = mapViseme(v);
+               return m ? { t: m.t, values: { [m.key]: 1 } } : null;
+              })
+             .filter(Boolean);
+        
+           blendfaces.loadTimeline(items);
+           blendfaces.playTimeline(0, audio);
+         } else {
+           // Manual setValue() path
+            scheduleVisemes(visemes, audio);
+         }
+          }, { once: true });
+
 
       const mapViseme = v => {
         const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
@@ -511,25 +593,7 @@ async function speakAndType(text, agentDiv) {
 
 
 
-      if (shouldUseBlendfaces() && blendfaces) {
-        const keys = visemes.map(mapViseme).filter(Boolean);
-        if (keys.length) {
-          blendfaces.loadTimeline(keys);
-          blendfaces.playTimeline(0, audio);
-        } else {
-          console.warn('[Viseme] No keys generated for timeline — check mapping above');
-        }
-      } else {
-        visemes.forEach(v => {
-          const mappedKey = mapViseme(v);
-          if (mappedKey) {
-            const name = Object.keys(mappedKey.values)[0]; // now 'A', 'E', 'I', 'O', 'U'
-            setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.timeMs);
-          }
-        });
-      }
 
-    }, { once: true });
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
@@ -770,6 +834,16 @@ function animate() {
     }
 
     if (shouldUseBlendfaces()) blendfaces.update(dt);
+
+        function render(delta, t) {
+      if (!vrmReady) return;
+
+      if (shouldUseBlendfaces() && blendfaces) {
+        blendfaces.update(delta); // REQUIRED for its timeline
+      } else {
+        applyExpressions(delta);  // Your manual path below
+      }
+    }
 
     // 2) ambient: breathe → gaze → blink
     handleBreath(t);
