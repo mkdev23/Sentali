@@ -174,7 +174,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return !!blendfaces;
+  return false; // Temporarily disable blendfaces to test scheduleVisemes
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -306,8 +306,8 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
 
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
-    smooth: 0.3,
-    decay: 1.5,
+    smooth: 0.8, // Increased to reduce smoothing
+    decay: 0.5,  // Decreased to reduce decay
     rest: { blink: 0.0 }
   });
   blendfaces.attachWS(cb => blendfacesWSHandler = cb);
@@ -379,7 +379,7 @@ function scheduleVisemes(visemes, audio) {
       }
       mgr.setValue(key, 1.0);
       mgr.update();
-      console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms`);
+      console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)})`);
       setTimeout(() => {
         mgr.setValue(key, 0.0);
         mgr.update();
@@ -804,6 +804,11 @@ function animate() {
       if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
         mgr.setValue(currentVisemeName, currentVisemeWeight);
         console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
+      }
+      // Ensure neutral doesn’t override visemes
+      if (mgr.getValue('neutral') !== undefined && mgr.getValue('neutral') > 0) {
+        mgr.setValue('neutral', 0.0);
+        mgr.update();
       }
     }
 
