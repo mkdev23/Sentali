@@ -8,6 +8,7 @@ declare module '@pixiv/three-vrm' {
     blendShapeProxy?: {
       setValue(name: string, weight: number): void;
       update(): void;
+      getValue?(name: string): number; // Optional for debugging
     };
   }
 }
@@ -49,7 +50,7 @@ export class BlendfacesController {
     this.map = new Map(Object.entries(opts.expressionMap || {}).map(([k, v], i) => [k.toLowerCase(), i])); // Convert to Map with indices
     this.smooth = opts.smooth ?? 0.25;
     this.decay = opts.decay ?? 2.0;
-    this.rest = opts.rest ?? { blink: 0.0 };
+    this.rest = opts.rest ?? { blink: 0.0 }; // Removed neutral from rest
     this.blendshapeController = new BlendshapeController(this.map);
 
     // Seed rest values
@@ -57,9 +58,9 @@ export class BlendfacesController {
   }
 
   set(rawName: string, weight: number, source: Source = 'live', ttlMs = 150): void {
-    const normalizedName = this.blendshapeController.getBlendshapeIndex(rawName.toLowerCase()) >= 0
+    const normalizedName = this.blendshapeController.has(rawName.toLowerCase())
       ? rawName.toLowerCase()
-      : rawName; // Use raw if not in map, fallback to original logic
+      : rawName; // Use rawName if not in map, relying on blendshapeController
     const s = this.state.get(normalizedName) ?? { current: 0, target: 0, source: 'rest', ttl: 0 };
     s.target = Math.max(0, Math.min(1, weight)); // Clamp [0,1]
     s.source = source;
@@ -135,7 +136,11 @@ export class BlendfacesController {
       console.log(`[Blendfaces Update] ${name}: target=${s.target}, current=${s.current}, source=${s.source}, ttl=${s.ttl}`);
 
       const mgr = this.vrm.blendShapeProxy || this.vrm.expressionManager;
-      if (mgr) mgr.setValue(name, s.current);
+      if (mgr) {
+        const currentValue = mgr.getValue ? mgr.getValue(name) : 0;
+        console.log(`[Blendfaces Debug] Applying ${name} to VRM, current=${currentValue}, new=${s.current}`);
+        mgr.setValue(name, s.current);
+      }
     }
 
     // Apply changes

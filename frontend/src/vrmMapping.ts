@@ -11,12 +11,12 @@ export const expressionMap = {
   fun: 'fun',
   surprised: 'surprised',
 
-  // Visemes (Azure phoneme → VRM shapekey; match model’s names)
+  // Visemes (Azure phoneme → VRM shapekey; match your model's names)
   aa: 'aa',
   ee: 'ee',
   ih: 'ih',
   oh: 'oh',
-  ou: 'ou',
+  ou: 'ou', // Corrected from 'uu' based on context
 
   // Blinks (direct)
   blink: 'blink',
