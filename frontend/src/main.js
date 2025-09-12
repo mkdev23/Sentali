@@ -301,6 +301,16 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   }
 });
 
+const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
+['A','E','I','O','U'].forEach((k, i) => {
+  setTimeout(() => {
+    mgr.setValue(k, 1.0);
+    mgr.update();
+    console.log('Set', k);
+    setTimeout(() => { mgr.setValue(k, 0.0); mgr.update(); }, 300);
+  }, i * 600);
+});
+
 function testVRM0MouthShapes() {
   const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
   if (!mgr) {
@@ -331,10 +341,8 @@ function testVRM0MouthShapes() {
 
 // Call this after VRM is loaded and added to the scene
 testVRM0MouthShapes();
-const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
-['A','E','I','O','U'].forEach(k => mgr?.setValue(k, 1.0));
-mgr?.update();
-setTimeout(() => { ['A','E','I','O','U'].forEach(k => mgr?.setValue(k, 0.0)); mgr?.update(); }, 800);
+
+
 
 
 
