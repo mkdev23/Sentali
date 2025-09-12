@@ -414,12 +414,6 @@ const vowelAliases = {
   ou: ['ou', 'U', 'vrc.v_ou', 'vowel_U']
 };
 
-const expressionMap = {
-  aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U',
-  // Only keep neutral if your VRM actually has it:
-   neutral: 'neutral'
-};
-
 
 
 // Resolve to a mouth expression that actually exists in your VRM/expressionMap
@@ -457,8 +451,6 @@ function mapViseme(v) {
 
 
 
-  console.warn('[Viseme] No matching VRM0 mouth for', name);
-  return null;
 }
 
 
