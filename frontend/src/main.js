@@ -301,43 +301,36 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   }
 });
 
-function testMouthShapes() {
+function testVRM0MouthShapes() {
   const mgr = currentVRM?.expressionManager || currentVRM?.blendShapeProxy;
   if (!mgr) {
-    console.warn('[Test] No expression manager found');
+    console.warn('No expression manager or blendShapeProxy found');
     return;
   }
 
-  const shapesToTest = ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'];
-
+  const presets = ['A', 'I', 'U', 'E', 'O'];
   let i = 0;
-  function nextShape() {
-    // Clear all shapes first
-    for (const key of shapesToTest) {
-      const mapped = expressionMap[key] ?? key;
-      mgr.setValue(mapped, 0.0);
-    }
 
-    if (i >= shapesToTest.length) {
-      console.log('[Test] Mouth shape test complete');
+  function next() {
+    presets.forEach(k => mgr.setValue(k, 0.0));
+    if (i >= presets.length) {
+      console.log('Test complete');
       return;
     }
-
-    const shape = shapesToTest[i];
-    const mapped = expressionMap[shape] ?? shape;
-    console.log(`[Test] Setting ${shape} (${mapped}) to 1.0`);
-    mgr.setValue(mapped, 1.0);
+    const key = presets[i];
+    console.log(`Setting ${key} to 1.0`);
+    mgr.setValue(key, 1.0);
     mgr.update();
-
     i++;
-    setTimeout(nextShape, 1000); // hold each shape for 1 second
+    setTimeout(next, 800);
   }
 
-  nextShape();
+  next();
 }
 
+
 // Call this after VRM is loaded and added to the scene
-testMouthShapes();
+testVRM0MouthShapes();
 
 
 
@@ -364,6 +357,7 @@ const vowelAliases = {
 
 // Resolve to a mouth expression that actually exists in your VRM/expressionMap
 function resolveMouth(name) {
+  // Prefer explicit aliases first
   const candidates = vowelAliases[name] || [name];
   const available = new Set(Object.keys(expressionMap || {}));
 
@@ -371,16 +365,17 @@ function resolveMouth(name) {
     if (available.has(c)) return c;
   }
 
-  // Try a single-letter fallback
-  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U', rest: 'rest' }[name];
+  // Single-letter VRM0 fallback
+  const fallback = { aa: 'A', ee: 'E', ih: 'I', oh: 'O', ou: 'U' }[name];
   if (fallback && available.has(fallback)) return fallback;
 
-  // Final fallback to 'happy' if available
-  if (available.has('neutral')) return 'neutral';
+  // If neutral is mapped in your model, allow it; otherwise skip
+  if (name === 'neutral' && available.has('neutral')) return 'neutral';
 
-  console.warn('[Viseme] No matching expression for', name, '— no rest shape found');
+  console.warn('[Viseme] No matching VRM0 mouth for', name);
   return null;
 }
+
 
 
 /* 🔹 Mouth alias list and set */
@@ -475,19 +470,24 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = true;
       typeOut(agentDiv, 'agent', text, durationMs);
 
-const mapViseme = v => {
-  const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
-  const src = id != null ? visemeMap[id] : (v.name ?? null);
-  console.log(`Raw viseme:`, v, '→ id:', id, '→ src:', src);
-  if (!src) return null;
-  const name = resolveMouth(src);
-  console.log(`resolveMouth(${src}) →`, name);
-  if (!name) return null;
-  const mapped = expressionMap[name] ?? name;
-  currentVisemeName = mapped;
-  currentVisemeWeight = 1.0;
-  return { t: v.timeMs / 1000, values: { [name]: 1 } };
-};
+      const mapViseme = v => {
+        const id = v.VisemeId ?? v.visemeId ?? v.id ?? null;
+        const src = id != null ? visemeMap[id] : (v.name ?? null);
+        console.log(`Raw viseme:`, v, '→ id:', id, '→ src:', src);
+        if (!src) return null;
+
+        const name = resolveMouth(src); // alias like 'aa', 'ee', etc.
+        console.log(`resolveMouth(${src}) →`, name);
+        if (!name) return null;
+
+        const mapped = expressionMap[name] ?? name; // actual VRM key: 'A', 'E', 'I', 'O', 'U'
+        currentVisemeName = mapped;
+        currentVisemeWeight = 1.0;
+
+        // Use mapped here, not alias
+        return { t: v.timeMs / 1000, values: { [mapped]: 1 } };
+      };
+
 
 
 
@@ -503,11 +503,12 @@ const mapViseme = v => {
         visemes.forEach(v => {
           const mappedKey = mapViseme(v);
           if (mappedKey) {
-            const name = Object.keys(mappedKey.values)[0];
+            const name = Object.keys(mappedKey.values)[0]; // now 'A', 'E', 'I', 'O', 'U'
             setTimeout(() => setExpressionPersistent(name, 1, DECAY_VISEME), v.timeMs);
           }
         });
       }
+
     }, { once: true });
 
     audio.addEventListener('ended', () => {
