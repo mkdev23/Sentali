@@ -173,7 +173,7 @@ function applyExpressions(delta) {
 }
 
 function shouldUseBlendfaces() {
-  return false; // Keep disabled until verified
+  return false; // Keep disabled until scheduleVisemes is verified
 }
 
 /* WebSocket for visemes and blendshapes */
@@ -370,7 +370,7 @@ function scheduleVisemes(visemes, audio) {
     .slice()
     .sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0))
     .map(mapViseme)
-    .filter(k => k && k.key !== 'neutral'); // Skip neutral
+    .filter(k => k && k.key !== 'neutral');
 
   const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
@@ -383,19 +383,24 @@ function scheduleVisemes(visemes, audio) {
         }
       });
       mgr.setValue(key, 1.0);
+      currentVisemeName = key;
+      currentVisemeWeight = 1.0;
       mgr.update();
       console.log(`[Viseme] Scheduled: ${key} at ${t * 1000}ms (value: ${mgr.getValue(key)})`);
-      // Reset after 300ms
+      visemeKeys.forEach(vk => {
+        const value = mgr.getValue(vk);
+        console.log(`[Viseme State] ${vk} = ${value}`);
+      });
       setTimeout(() => {
         mgr.setValue(key, 0.0);
         mgr.update();
-      }, 300);
+      }, 500); // Increased TTL
     }, Math.max(0, t * 1000));
   });
 
   // After the last viseme, reset all to 0
   if (keys.length > 0) {
-    const lastT = keys[keys.length - 1].t * 1000 + 300;
+    const lastT = keys[keys.length - 1].t * 1000 + 500;
     setTimeout(() => {
       visemeKeys.forEach(vk => {
         if (mgr.getValue(vk) !== undefined) {
@@ -403,6 +408,7 @@ function scheduleVisemes(visemes, audio) {
         }
       });
       mgr.update();
+      console.log('[Viseme] Reset all visemes after sequence');
     }, lastT);
   }
 
@@ -821,10 +827,6 @@ function animate() {
       if (mgr.getValue('neutral') !== undefined && mgr.getValue('neutral') > 0) {
         mgr.setValue('neutral', 0.0);
         mgr.update();
-      }
-      if (currentVisemeName && mgr.getValue(currentVisemeName) !== undefined) {
-        mgr.setValue(currentVisemeName, currentVisemeWeight);
-        console.log(`[Animate] Re-applied viseme: ${currentVisemeName} = ${currentVisemeWeight}`);
       }
       const visemeKeys = ['aa', 'ee', 'ih', 'oh', 'ou'];
       visemeKeys.forEach(key => {
