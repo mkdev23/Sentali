@@ -4,27 +4,47 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { expressionMap } from './vrmMapping.js';
 import { loadVRM } from './vrmUtils.js';
 import { WSClient } from './ws.js';
-import { BlendfacesController, BlendshapeController } from './blendfaces.js';
+import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
 
-// UI toggles and endpoints
+// ——— Config & Globals ———
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
-// Scene, camera, renderer
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
-const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('c') });
+let currentVRM = null;
+let exprMgr = null;        // VRM1: expressionManager; VRM0: blendShapeProxy
+let vrmReady = false;
 
-camera.position.set(0, 1.6, 4.5);
-camera.updateProjectionMatrix();
+let blendfaces = null;
+let blendfacesWSHandler = null;
 
+let isSpeaking = false;
+let ttsInflight = false;
+let ttsAbortController = null;
+
+const clock = new THREE.Clock();
+const activeExpr = {};
+const DECAY_EMO = 3.0;
+const DECAY_VISEME = 10.0;
+const SMOOTH = 0.4;
+
+let chestBaseY = 0;
+let blinkTimer = 2 + Math.random() * 3;
+let gazeTimer = 2 + Math.random() * 2;
+let gazeDirection = 0;
+
+// ——— Scene / Renderer / Camera ———
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 
-// Controls
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 1.6, 4.5);
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.6, 0);
 controls.enableDamping = true;
@@ -36,13 +56,13 @@ controls.update();
 // Lighting
 scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 [
-  new THREE.DirectionalLight(0xffffff, 1.2),
-  new THREE.DirectionalLight(0xffffff, 0.6),
-  new THREE.DirectionalLight(0xffffff, 0.8)
-].forEach((light, i) => {
-  const pos = [[0.5,1,0.8],[-0.5,0.8,-0.8],[0,1,-1]][i];
-  light.position.set(...pos);
-  scene.add(light);
+  [0.5, 1, 0.8, 1.2],
+  [-0.5, 0.8, -0.8, 0.6],
+  [0, 1, -1, 0.8]
+].forEach(([x, y, z, intensity]) => {
+  const dl = new THREE.DirectionalLight(0xffffff, intensity);
+  dl.position.set(x, y, z);
+  scene.add(dl);
 });
 
 // Groups
@@ -50,28 +70,15 @@ const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
 scene.add(vrmGroup, skyGroup);
 
-let currentVRM;
-let blendfaces;
-let blendfacesWSHandler = null;
-const clock = new THREE.Clock();
-
-let exprMgr = null;        // VRM 0.x: blendShapeProxy; VRM 1.x: expressionManager
-let vrmReady = false;
-
-function isVRM0() {
-  return !!(currentVRM && currentVRM.blendShapeProxy && !currentVRM.expressionManager);
-}
-
+// ——— Helpers ———
 function getMgr() {
-  return exprMgr || (currentVRM?.expressionManager || currentVRM?.blendShapeProxy) || null;
+  return exprMgr || currentVRM?.expressionManager || currentVRM?.blendShapeProxy || null;
 }
-
-// Mobile detection
 function isMobile() {
   return /Mobi|Android/i.test(navigator.userAgent);
 }
 
-// Load skybox with timeout/retry and mobile fallback to PNG
+// ——— Skybox loader with fallback ———
 async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -82,7 +89,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
     } catch (err) {
       console.warn(`[Skybox] Attempt ${attempt} failed:`, err);
       if (attempt === retries) throw err;
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 }
@@ -117,7 +124,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
               scene.background = tex;
             }
             child.material = new THREE.MeshBasicMaterial({
-              map: tex,
+              map: child.material.map || child.material.emissiveMap,
               side: THREE.BackSide,
               toneMapped: false
             });
@@ -134,12 +141,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
   }
 })();
 
-// Expression management
-const activeExpr = {};
-const DECAY_EMO = 3.0;
-const DECAY_VISEME = 2.0; // Reduced for faster viseme decay
-const SMOOTH = 0.4;
-
+// ——— Expression management ———
 function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
   const mapped = expressionMap[name] ?? name;
   activeExpr[mapped] = { weight, decay };
@@ -167,25 +169,173 @@ function shouldUseBlendfaces() {
   return !!blendfaces;
 }
 
-/* WebSocket for visemes and blendshapes */
+// ——— Ambient behaviours ———
+function handleBlink(delta) {
+  blinkTimer -= delta;
+  if (blinkTimer <= 0) {
+    if (shouldUseBlendfaces()) {
+      blendfaces.set('blink', 1.0, 'live', 150);
+    } else {
+      const mgr = getMgr();
+      if (mgr) {
+        mgr.setValue('blink', 1.0);
+        mgr.update();
+        setTimeout(() => {
+          mgr.setValue('blink', 0.0);
+          mgr.update();
+        }, 150);
+      }
+    }
+    blinkTimer = 2 + Math.random() * 3;
+  }
+}
+
+function handleGaze(delta) {
+  gazeTimer -= delta;
+  if (gazeTimer <= 0) {
+    gazeDirection = (Math.random() - 0.5) * 0.2;
+    gazeTimer = 2 + Math.random() * 2;
+  }
+  const head = currentVRM?.humanoid.getNormalizedBoneNode('head')
+             || currentVRM?.scene.getObjectByName('Head');
+  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
+}
+
+function handleBreath(t) {
+  const chest = currentVRM?.humanoid.getNormalizedBoneNode('chest')
+             || currentVRM?.humanoid.getNormalizedBoneNode('upper_chest')
+             || currentVRM?.scene.getObjectByName('Spine1')
+             || currentVRM?.scene.getObjectByName('Spine2');
+  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
+}
+
+// ——— VRM load + dynamic viseme mapping ———
+loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
+  currentVRM = vrm;
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI;
+
+  exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
+  vrmReady = !!exprMgr;
+
+  const chest = vrm.humanoid.getNormalizedBoneNode('chest')
+             || vrm.humanoid.getNormalizedBoneNode('upper_chest');
+  if (chest) chestBaseY = chest.position.y;
+
+  // Merge actual expressions from VRM1.0 into expressionMap for visemes
+  const available = exprMgr.getExpressionNames?.() ?? [];
+  ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].forEach(alias => {
+    if (available.includes(alias)) expressionMap[alias] = alias;
+  });
+  console.log('[VRM] Available expressions:', available);
+
+  blendfaces = new BlendfacesController(vrm, {
+    expressionMap,
+    smooth: 0.3,
+    decay: 1.5,
+    rest: { blink: 0.0 }
+  });
+  blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
+
+  console.log('[VRM] Loaded, vrmReady=', vrmReady);
+});
+
+// ——— Viseme mapping (ID → alias) ———
+const visemeMap = {
+  0: 'neutral',
+  1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
+  6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
+  11: 'ou', 12: 'aa', 13: 'ee', 14: 'ih', 15: 'oh',
+  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh',
+  21: 'neutral'
+};
+
+// ——— Resolver: alias → exact VRM key (no AEIOU fallbacks) ———
+function resolveToVRMKey(v) {
+  const alias = typeof v === 'string'
+    ? v
+    : visemeMap[v.VisemeId ?? v.visemeId ?? v.id] ?? v.name ?? null;
+  return alias ? expressionMap[alias] ?? null : null;
+}
+
+// ——— Mappers: timeline vs manual ———
+function mapVisemeForTimeline(v) {
+  const key = resolveToVRMKey(v);
+  return key ? { t: (v.timeMs || 0) / 1000, values: { [key]: 1 } } : null;
+}
+function mapVisemeForManual(v) {
+  const key = resolveToVRMKey(v);
+  return key ? { t: (v.timeMs || 0) / 1000, key } : null;
+}
+
+// ——— Manual scheduler ———
+function scheduleVisemes(visemes, audio) {
+  if (!vrmReady) return;
+  const mgr = getMgr();
+  if (!mgr) return;
+
+  visemes
+    .slice()
+    .sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0))
+    .map(mapVisemeForManual)
+    .filter(Boolean)
+    .forEach(({ t, key }) => {
+      setTimeout(() => {
+        mgr.setValue(key, 1.0);
+        mgr.update();
+        setTimeout(() => {
+          mgr.setValue(key, 0.0);
+          mgr.update();
+        }, 120);
+      }, Math.max(0, t * 1000));
+    });
+
+  if (audio) audio.play().catch(() => {});
+}
+
+// ——— WebSocket: server‑pushed TTS/visemes/emotions ———
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
   onOpen: () => console.log('WS connected'),
+  onClose: () => console.log('WS disconnected'),
   onMessage: data => {
     const audioUrl = data.audioUrl || data.audio;
-    if (audioUrl) new Audio(audioUrl).play().catch(e => console.warn('WS audio error', e));
-
-    if (data.expression) setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
-    if (data.type === 'blendshapes' && data.values) {
-      for (const [n, w] of Object.entries(data.values)) setExpressionPersistent(n, Number(w), DECAY_EMO);
+    if (data.expression) {
+      setExpressionPersistent(data.expression, 1.0, DECAY_EMO);
     }
-    if (data.type === 'viseme' && data.name) setExpressionPersistent(data.name, data.weight ?? 1, DECAY_VISEME);
-  },
-  onClose: () => console.log('WS disconnected')
+    if (!audioUrl) return;
+
+    const visemes = Array.isArray(data.visemes) ? data.visemes : [];
+    const audio = new Audio(audioUrl);
+    audio.crossOrigin = 'anonymous';
+
+    audio.addEventListener('play', () => {
+      isSpeaking = true;
+      if (shouldUseBlendfaces() && blendfaces) {
+        const items = visemes.map(mapVisemeForTimeline).filter(Boolean);
+        if (items.length) {
+          blendfaces.loadTimeline(items);
+          blendfaces.playTimeline(0, audio);
+        } else {
+          console.warn('[Visemes] No valid timeline items');
+        }
+      } else {
+        scheduleVisemes(visemes, audio);
+      }
+    }, { once: true });
+
+    audio.addEventListener('ended', () => {
+      isSpeaking = false;
+      const mgr = getMgr();
+      if (mgr) mgr.update();
+    });
+
+    audio.play().catch(e => console.warn('WS audio error', e));
+  }
 });
 wsClient.connect();
 
-/* Sanitizer for TTS input */
+// ——— TTS (client-initiated) ———
 function sanitizeForTTS(s) {
   if (!s) return '';
   let t = s.split('[No response]').join('').trim();
@@ -208,142 +358,9 @@ function sanitizeForTTS(s) {
   return out.trim();
 }
 
-/* Ambient state & behaviours */
-let chestBaseY = 0;
-let blinkTimer = 2 + Math.random() * 3;
-let gazeTimer = 2 + Math.random() * 2;
-let gazeDirection = 0;
-
-function handleBlink(delta) {
-  blinkTimer -= delta;
-  if (blinkTimer <= 0) {
-    if (shouldUseBlendfaces()) blendfaces.set('blink', 1.0, 'live', 150);
-    else {
-      const mgr = getMgr();
-      if (mgr) {
-        mgr.setValue('blink', 1.0);
-        mgr.update();
-        setTimeout(() => {
-          mgr.setValue('blink', 0.0);
-          mgr.update();
-        }, 150);
-      }
-    }
-    blinkTimer = 2 + Math.random() * 3;
-  }
-}
-
-function handleGaze(delta) {
-  gazeTimer -= delta;
-  if (gazeTimer <= 0) {
-    gazeDirection = (Math.random() - 0.5) * 0.2;
-    gazeTimer = 2 + Math.random() * 2;
-  }
-  let head = currentVRM?.humanoid.getNormalizedBoneNode('head');
-  if (!head) head = vrm.scene.getObjectByName('Head');
-  if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
-}
-
-function handleBreath(t) {
-  let chest = currentVRM?.humanoid.getNormalizedBoneNode('chest');
-  if (!chest) chest = currentVRM?.humanoid.getNormalizedBoneNode('upper_chest');
-  if (!chest) chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
-  if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
-}
-
-/* Load VRM + initialize ambient timers */
-function initAvatar(vrm) {
-  let chest = vrm.humanoid.getNormalizedBoneNode('chest');
-  if (!chest) chest = vrm.humanoid.getNormalizedBoneNode('upper_chest');
-  if (!chest) chest = vrm.scene.getObjectByName('Spine1') || vrm.scene.getObjectByName('Spine2');
-  if (chest) chestBaseY = chest.position.y;
-  blinkTimer = 2 + Math.random() * 3;
-  gazeTimer = 2 + Math.random() * 2;
-  gazeDirection = 0;
-}
-
-loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
-  currentVRM = vrm;
-  exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
-  vrmReady = !!exprMgr;
-
-  vrmGroup.add(vrm.scene);
-  vrm.scene.rotation.y = Math.PI;
-
-  controls.target.set(0, 1.6, 0);
-  controls.update();
-
-  initAvatar(vrm);
-
-  blendfaces = new BlendfacesController(vrm, {
-    expressionMap,
-    smooth: 0.5, // Increased for snappier response
-    decay: 1.0, // Reduced for slower fade
-    rest: { blink: 0.0 }
-  });
-  blendfaces.attachWS(cb => blendfacesWSHandler = cb);
-
-  console.log('[VRM] Loaded successfully');
-  console.log('[VRM] Humanoid bones:', Object.keys(vrm.humanoid.humanBones));
-  if (vrmReady) {
-    const mgr = getMgr();
-    const expressions = mgr.getBlendShapeNames ? mgr.getBlendShapeNames() : [];
-    console.log('[VRM] Blendshapes:', expressions);
-  }
-});
-
-/* Viseme ID map from backend */
-const visemeMap = {
-  0: 'neutral', // closed/neutral mouth
-  1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
-  6: 'ou', 7: 'ou', 8: 'ee', 9: 'ih', 10: 'oh',
-  11: 'ou', 12: 'aa', 13: 'ee', 14: 'ih', 15: 'oh',
-  16: 'ou', 17: 'aa', 18: 'ee', 19: 'ih', 20: 'oh',
-  21: 'neutral' // fallback for unknown ID
-};
-
-// Aliases for your VRM0 vowel presets
-const vowelAliases = {
-  aa: ['aa'],
-  ee: ['ee'],
-  ih: ['ih'],
-  oh: ['oh'],
-  ou: ['ou']
-};
-
-/* Resolve to a VRM0-compatible blendshape key */
-function resolveToVRMKey(viseme) {
-  const id = viseme.VisemeId ?? viseme.visemeId ?? viseme.id ?? null;
-  const alias = id != null ? visemeMap[id] : (viseme.name ?? null);
-  if (!alias) return null;
-
-  const candidates = vowelAliases[alias] || [alias];
-  for (const c of candidates) {
-    if (expressionMap[c]) return expressionMap[c]; // Direct match to your model's names
-  }
-  return null;
-}
-
-function mapViseme(v) {
-  const key = resolveToVRMKey(v);
-  if (!key) {
-    console.warn('[Viseme] No mapping for', v);
-    return null;
-  }
-  console.log(`[Viseme] Mapped ${v.VisemeId} to ${key} at ${v.timeMs}ms`);
-  return { t: v.timeMs / 1000, values: { [key]: 1 } };
-}
-
-/* Prevent overlapping TTS calls with abort */
-let ttsInflight = false;
-let isSpeaking = false;
-let ttsAbortController = null;
-let currentVisemeName = null;
-let currentVisemeWeight = 0;
-
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
-    console.warn('[TTS] Request in-flight; aborting previous');
+    console.warn('[TTS] In-flight; aborting previous');
     ttsAbortController?.abort();
     updateChatEntry(agentDiv, 'agent', text);
   }
@@ -358,20 +375,17 @@ async function speakAndType(text, agentDiv) {
       body: JSON.stringify({ text: clean }),
       signal: ttsAbortController.signal
     });
-
     const res = await Promise.race([
       fetchPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error('TTS timeout')), 60000))
     ]);
-
     if (!res.ok) {
-      console.error(`[TTS] HTTP ${res.status}`);
+      console.error('[TTS] HTTP', res.status);
       updateChatEntry(agentDiv, 'agent', text);
       return;
     }
 
     const body = await res.json().catch(() => null);
-    console.log('[TTS] Response:', body);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl', body);
       updateChatEntry(agentDiv, 'agent', text);
@@ -379,19 +393,18 @@ async function speakAndType(text, agentDiv) {
     }
 
     const visemes = (body.visemes || []).slice().sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
-    console.log('[TTS] Visemes:', visemes);
-
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
-    audio.addEventListener('error', err => console.error('[TTS] Audio error:', err), { once: true });
-    audio.addEventListener('canplaythrough', () => console.log('[TTS] Ready'), { once: true });
 
     await new Promise((resolve, reject) => {
       audio.addEventListener('loadedmetadata', resolve, { once: true });
       audio.addEventListener('error', reject, { once: true });
-    }).catch(err => console.warn('[TTS] Metadata load failed:', err));
+    }).catch(() => {});
 
-    const durationMs = (audio.duration > 0) ? audio.duration * 1000 : Math.max(1500, Math.min(12000, text.split(/\s+/).length * 250));
+    const durationMs = (audio.duration > 0)
+      ? audio.duration * 1000
+      : Math.max(1500, Math.min(12000, text.split(/\s+/).length * 250));
+
     const expression = body.expression || 'neutral';
     setExpressionPersistent(expression, 1.0, DECAY_EMO);
 
@@ -400,32 +413,20 @@ async function speakAndType(text, agentDiv) {
       typeOut(agentDiv, 'agent', text, durationMs);
 
       if (shouldUseBlendfaces() && blendfaces) {
-        const keys = visemes.map(v => mapViseme(v)).filter(Boolean);
-        if (keys.length) {
-          blendfaces.loadTimeline(keys);
+        const items = visemes.map(mapVisemeForTimeline).filter(Boolean);
+        if (items.length) {
+          blendfaces.loadTimeline(items);
           blendfaces.playTimeline(0, audio);
-        } else console.warn('[Viseme] No valid keys for timeline');
+        } else {
+          console.warn('[Visemes] No valid timeline items');
+        }
       } else {
-        visemes.forEach(v => {
-          const key = resolveToVRMKey(v);
-          if (key) {
-            setTimeout(() => {
-              const mgr = getMgr();
-              if (mgr) {
-                mgr.setValue(key, 1.0);
-                mgr.update();
-                setTimeout(() => mgr.setValue(key, 0.0), 120);
-              }
-            }, v.timeMs || 0);
-          }
-        });
+        scheduleVisemes(visemes, audio);
       }
     }, { once: true });
 
     audio.addEventListener('ended', () => {
       isSpeaking = false;
-      currentVisemeName = null;
-      currentVisemeWeight = 0;
       const mgr = getMgr();
       if (mgr) mgr.update();
     });
@@ -436,8 +437,11 @@ async function speakAndType(text, agentDiv) {
       isSpeaking = false;
     });
   } catch (err) {
-    if (err.name !== 'AbortError' && err.message !== 'TTS timeout') console.error('[TTS] Error:', err);
-    else console.warn('[TTS] Timed out after 60s');
+    if (err.name !== 'AbortError' && err.message !== 'TTS timeout') {
+      console.error('[TTS] Error:', err);
+    } else {
+      console.warn('[TTS] Timeout after 60s');
+    }
     updateChatEntry(agentDiv, 'agent', text);
     isSpeaking = false;
   } finally {
@@ -446,7 +450,7 @@ async function speakAndType(text, agentDiv) {
   }
 }
 
-/* === Chat + TTS === */
+// ——— Chat UI helpers ———
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
   if (!log) {
@@ -460,12 +464,10 @@ function addChatEntry(role, text) {
   log.scrollTop = log.scrollHeight;
   return div;
 }
-
 function updateChatEntry(div, role, text) {
   if (!div) return;
   div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
 }
-
 function typeOut(el, role, text, durationMs) {
   if (!el) return;
   const start = performance.now();
@@ -484,8 +486,8 @@ function typeOut(el, role, text, durationMs) {
   requestAnimationFrame(frame);
 }
 
+// ——— Chat send ———
 let sendingNow = false;
-
 async function sendToAgent() {
   if (sendingNow) return;
   sendingNow = true;
@@ -517,14 +519,12 @@ async function sendToAgent() {
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
       addChatEntry('agent', '[Error contacting Agent]');
-      sendingNow = false;
       return;
     }
 
-    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').trim();
+    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
       addChatEntry('agent', '[No response]');
-      sendingNow = false;
       return;
     }
 
@@ -538,13 +538,10 @@ async function sendToAgent() {
   }
 }
 
-/* === Mic button === */
+// ——— Mic button ———
 function initMicButton() {
   const micBtn = document.getElementById('micBtn');
-  if (!micBtn) {
-    console.warn('[UI] #micBtn not found');
-    return;
-  }
+  if (!micBtn) return;
   if (!('webkitSpeechRecognition' in window)) {
     micBtn.disabled = true;
     micBtn.title = 'Speech recognition not supported';
@@ -555,7 +552,6 @@ function initMicButton() {
     recog.lang = 'en-US';
     recog.interimResults = false;
     recog.maxAlternatives = 1;
-
     recog.onresult = e => {
       const input = document.getElementById('agentInput');
       if (input) input.value = e.results[0][0].transcript;
@@ -566,7 +562,7 @@ function initMicButton() {
   });
 }
 
-/* === UI wiring === */
+// ——— UI wiring ———
 function initUI() {
   const sendBtn = document.getElementById('agentSendBtn');
   const inputEl = document.getElementById('agentInput');
@@ -580,66 +576,48 @@ function initUI() {
       }
     });
   }
-
   initMicButton();
 }
-
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initUI, { once: true });
 } else {
   initUI();
 }
 
-/* === Animation loop === */
+// ——— Animation loop ———
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
   const t = clock.getElapsedTime();
 
+  controls.update();
+
   if (currentVRM) {
     currentVRM.update(dt);
 
+    // Optional idle bias if your model has these shapes
     const mgr = getMgr();
-    if (!mgr) return;
-
-    // Default "happy" expression (ambient idle)
-    if (!isSpeaking && Object.keys(activeExpr).length === 0) {
-      mgr.setValue('happy', 1.0);
-      mgr.setValue('neutral', 0.0);
+    if (mgr && !isSpeaking && Object.keys(activeExpr).length === 0) {
+      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
+      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
     }
 
-    // Spine sway
-    const spine = currentVRM.humanoid.getNormalizedBoneNode('spine');
-    if (spine) {
-      spine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-    } else {
-      const fallbackSpine = vrm.scene.getObjectByName('Spine');
-      if (fallbackSpine) {
-        fallbackSpine.rotation.y = Math.sin(t * 0.5 * Math.PI * 2) * 0.02;
-        console.log('[Sway] Fell back to raw Spine bone');
-      } else {
-        console.warn('[Ambient] No spine bone found');
-      }
-    }
-
-    // Expressions/visemes
     applyExpressions(dt);
-    if (shouldUseBlendfaces()) blendfaces.update(dt);
 
-    // Ambient behaviors
+    if (shouldUseBlendfaces()) {
+      blendfaces.update(dt);
+    }
+
     handleBreath(t);
     handleGaze(dt);
     handleBlink(dt);
-  } else {
-    console.warn('[Animate] No currentVRM');
   }
 
-  controls.update();
   renderer.render(scene, camera);
 }
 animate();
 
-/* === Window resize handler === */
+// ——— Resize ———
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
