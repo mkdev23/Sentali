@@ -209,12 +209,13 @@ function handleBreath(t) {
   if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
 }
 
-// ——— VRM load + dynamic viseme mapping ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
-console.log('[VRM] Loaded:', vrm);
+
+  console.log('[VRM] Loaded:', vrm);
+
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
@@ -222,7 +223,6 @@ console.log('[VRM] Loaded:', vrm);
              || vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
 
-  // Merge actual expressions from VRM1.0 into expressionMap for visemes
   const available = exprMgr.getExpressionNames?.() ?? [];
   ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].forEach(alias => {
     if (available.includes(alias)) expressionMap[alias] = alias;
@@ -238,6 +238,40 @@ console.log('[VRM] Loaded:', vrm);
   blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
 
   console.log('[VRM] Loaded, vrmReady=', vrmReady);
+
+  // --- ADD TO SCENE + RECENTER ---
+  scene.add(vrm.scene);
+
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  const center = box.getCenter(new THREE.Vector3());
+  vrm.scene.position.sub(center);
+  vrm.scene.position.y += 1.0; // raise to approx eye level
+
+  // disable first-person culling
+  if (vrm.firstPerson) {
+    vrm.firstPerson.autoUpdate = false;
+  }
+
+  // ensure layer 0 is used
+  vrm.scene.traverse(o => o.layers?.enable?.(0));
+  camera.layers.set(0);
+
+  // force visible materials for debug
+  const basic = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  let meshCount = 0, nullMat = 0;
+  vrm.scene.traverse(o => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      meshCount++;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      const hasNull = mats.some(m => !m);
+      if (hasNull) nullMat++;
+      o.material = basic;
+      o.visible = true;
+      o.castShadow = false;
+      o.frustumCulled = false;
+    }
+  });
+  console.log('[VRM] Meshes:', meshCount, 'meshes with null materials:', nullMat);
 });
 
 // ——— Viseme mapping (ID → alias) ———
