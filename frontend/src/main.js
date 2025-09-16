@@ -214,7 +214,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   vrmGroup.add(vrm.scene);
   vrm.scene.rotation.y = Math.PI;
-
+console.log('[VRM] Loaded:', vrm);
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
