@@ -211,10 +211,6 @@ function handleBreath(t) {
 
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
-  vrmGroup.add(vrm.scene);
-  vrm.scene.rotation.y = Math.PI;
-
-  // Pick the right expression manager for VRM 0.x or 1.0
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
@@ -238,23 +234,31 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   });
   blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
 
-  // --- Scene setup ---
-  scene.add(vrm.scene);
+  // Parent once, keep child local-clean
+  vrm.scene.rotation.y = Math.PI;
+  vrm.scene.position.set(0, 0, 0);
+  vrmGroup.add(vrm.scene);
 
-  // Recenter to origin based on bounding box
+  // Recenter: measure child, move parent, zero child local
   const box = new THREE.Box3().setFromObject(vrm.scene);
   const center = box.getCenter(new THREE.Vector3());
-  vrm.scene.position.sub(center);
-  vrm.scene.position.y += 1.0; // lift to eye level
+
+  // Move parent so the avatar’s center lands at world origin
+  vrmGroup.position.sub(center);
+
+  // Lift to eye level (adjust as needed)
+  vrmGroup.position.y += 1.0;
 
   // Disable first-person culling for now
   if (vrm.firstPerson) {
     vrm.firstPerson.autoUpdate = false;
   }
 
-  // Ensure visible to main camera
-  vrm.scene.traverse(o => o.layers?.enable?.(0));
+  // Ensure visibility to main camera and align orbit target
+  vrmGroup.traverse(o => o.layers?.enable?.(0));
   camera.layers.set(0);
+  controls.target.set(0, 1.6, 0);
+  controls.update();
 
   console.log('[VRM] Ready:', vrm.meta?.name, 'Expressions:', available);
 });
