@@ -6,6 +6,7 @@ import { loadVRM } from './vrmUtils.js';
 import { WSClient } from './ws.js';
 import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
+import { GestureController } from './gestures.js';
 
 // ——— Config & Globals ———
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
@@ -358,11 +359,15 @@ const visemeScheduler = new VisemeScheduler();
 function shouldUseBlendfaces() {
   return !!blendfaces;
 }
+
+let gestures;
 // ——— VRM Load ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
+
+  gestures = new GestureController(vrm);
 
   // Add to group
   vrmGroup.add(vrm.scene);
@@ -376,7 +381,14 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     const scaleFactor = targetHeight / size.y;
     vrm.scene.scale.setScalar(scaleFactor);
   }
-
+// --- Small arm rotation to prevent clipping into body ---
+const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+if (lArm && rArm) {
+  // Rotate slightly outward on Z axis
+  lArm.rotation.z += THREE.MathUtils.degToRad(6);
+  rArm.rotation.z -= THREE.MathUtils.degToRad(6);
+}
   // --- Place feet at y=0 ---
   box.setFromObject(vrm.scene);
   const center = new THREE.Vector3();
@@ -766,7 +778,6 @@ async function speakAndType(text, agentDiv) {
   }
 }
 
-
 // ——— Chat UI helpers ———
 function addChatEntry(role, text) {
   const log = document.getElementById('chat-log');
@@ -936,7 +947,9 @@ if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
     if (blendfaces) {
       blendfaces.update(dt);
     }
-
+    if (gestures) {
+  gestures.update();
+}
     // Ambient behaviours
     handleBreath(t);
     handleGaze(dt);
