@@ -667,6 +667,78 @@ function sanitizeForTTS(s) {
   }
   return out.trim();
 }
+async function analyzeWithAnyRun(url) {
+  addChatEntry('user', `scan: ${url}`);
+  try {
+    const res = await fetch(`${backendBase}/api/anyrun/url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      return;
+    }
+
+    const taskId = data.taskId || data.id || data.uuid;
+    addChatEntry('sentali', `Started analysis. Task: ${taskId}`);
+
+    // Poll every 5s until done or 3 min timeout
+    const start = Date.now();
+    const poll = setInterval(async () => {
+      const s = await fetch(`${backendBase}/api/anyrun/status/${taskId}`);
+      const status = await s.json();
+      const done = status?.status === 'finished' || status?.state === 'done' || status?.done === true;
+      const failed = status?.status === 'failed' || status?.error;
+
+      if (done || failed || Date.now() - start > 180000) {
+        clearInterval(poll);
+        if (failed) {
+          addChatEntry('sentali', `[ANY.RUN failed] ${status?.error || 'Unknown error'}`);
+        } else {
+          addChatEntry('sentali', 'Analysis completed. (See console for details)');
+          console.log('[ANY.RUN report]', status);
+        }
+      }
+    }, 5000);
+  } catch (err) {
+    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+  }
+}
+
+// Reusable typewriter helper
+async function typeOut(agentDiv, role, text, totalDurationMs) {
+  // Detect if this is a code block (triple backticks or "looks like code")
+  const codeMatch = text.match(/```(\w+)?\n([\s\S]*?)\n```/);
+  const isLikelyCode = /import|function|const|let|class|=>/.test(text);
+
+  if (codeMatch || isLikelyCode) {
+    // Extract just the code content if wrapped in backticks
+    const codeContent = codeMatch ? codeMatch[2] : text;
+    const lines = codeContent.split('\n');
+    const delay = totalDurationMs / Math.max(lines.length, 1);
+
+    let current = '';
+    for (let i = 0; i < lines.length; i++) {
+      current += (i > 0 ? '\n' : '') + lines[i];
+      updateChatEntry(agentDiv, role, current);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  } else {
+    // Normal text: type character-by-character
+    const chars = [...text];
+    const delay = totalDurationMs / Math.max(chars.length, 1);
+
+    let current = '';
+    for (let i = 0; i < chars.length; i++) {
+      current += chars[i];
+      updateChatEntry(agentDiv, role, current);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
 
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
@@ -717,7 +789,6 @@ async function speakAndType(text, agentDiv) {
       setTimeout(finish, 350);
     });
 
-    // Drive typing to match audio/viseme duration (keeps pace with the text box)
     const durationMs = Math.max(
       (audio.duration > 0 ? audio.duration * 1000 : 0),
       lastVisemeMs + 250,
@@ -725,21 +796,17 @@ async function speakAndType(text, agentDiv) {
     );
 
     const expression = body.expression || body.sentiment || 'neutral';
-
-    // Build timeline now and mark active before trying to play
     const items = buildVisemeTimeline(visemes);
     const safetyMs = lastVisemeMs + 600;
 
     visemeActive = true;
     isSpeaking = true;
 
-    // Sentiment overlay across the whole utterance
     setSentimentHold(expression, audio, 0.6);
 
-    // Start typing synced to duration
-    typeOut(agentDiv, 'agent', text, durationMs);
+    // Start typing and audio/visemes together
+    const typingPromise = typeOut(agentDiv, 'agent', text, durationMs);
 
-    // Kick Blendfaces or manual scheduler immediately
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
         blendfaces.loadTimeline(items);
@@ -751,21 +818,21 @@ async function speakAndType(text, agentDiv) {
       scheduleVisemes(visemes, audio);
     }
 
-    // Clear flags on end and via safety timeout
     const clearFlags = () => {
       visemeActive = false;
       isSpeaking = false;
-      const mgr = getMgr();
-      if (mgr) mgr.update();
+      getMgr()?.update();
     };
     audio.addEventListener('ended', clearFlags, { once: true });
     setTimeout(clearFlags, safetyMs);
 
-    // Try to play audio; if it fails, typing and visemes still run
     audio.play().catch(err => {
       console.warn('[TTS] Play failed:', err);
-      // We already started timeline/scheduler; keep going
     });
+
+    // Wait for typing to finish before exiting
+    await typingPromise;
+
   } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS timeout') {
       console.error('[TTS] Error:', err);
@@ -780,6 +847,7 @@ async function speakAndType(text, agentDiv) {
     ttsAbortController = null;
   }
 }
+
 
 // ——— Chat UI helpers ———
 function addChatEntry(role, text) {
@@ -829,7 +897,6 @@ function handleGreetingTrigger(message) {
   }
 }
 
-// --- Chat send ---
 let sendingNow = false;
 async function sendToAgent() {
   if (sendingNow) return;
@@ -841,12 +908,57 @@ async function sendToAgent() {
     sendingNow = false;
     return;
   }
+
   const msg = inputEl.value.trim();
   if (!msg) {
     addChatEntry('agent', '[Please enter a message]');
     sendingNow = false;
     return;
   }
+
+  // ✅ Now safe to check for scan command
+  if (msg.startsWith('scan ')) {
+    const url = msg.slice(5).trim();
+    analyzeWithAnyRun(url);
+    sendingNow = false;
+    return;
+  }
+
+  // Trigger greeting gestures/sentiment if applicable
+  handleGreetingTrigger(msg);
+
+  addChatEntry('user', msg);
+  inputEl.value = '';
+
+  try {
+    const chatRes = await fetch(`${backendBase}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: msg })
+    });
+    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
+    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
+    if (!chatRes.ok) {
+      console.error('[Chat Error]', chatRes.status, body);
+      addChatEntry('agent', '[Error contacting Agent]');
+      return;
+    }
+
+    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
+    if (!reply) {
+      addChatEntry('agent', '[No response]');
+      return;
+    }
+
+    const agentDiv = addChatEntry('agent', '');
+    await speakAndType(reply, agentDiv);
+  } catch (err) {
+    console.error('[Agent Error]', err);
+    addChatEntry('agent', '[Error contacting Agent]');
+  } finally {
+    sendingNow = false;
+  }
+
 
   // Trigger greeting gestures/sentiment if applicable
   handleGreetingTrigger(msg);
