@@ -404,7 +404,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     const headPos = new THREE.Vector3();
     head.getWorldPosition(headPos);
     controls.target.copy(headPos);
-    camera.position.set(headPos.x, headPos.y, headPos.z + 1.2);
+    camera.position.set(headPos.x, headPos.y, headPos.z - 1.2);
   }
   controls.update();
 
@@ -567,8 +567,8 @@ function scheduleVisemes(visemes, audio) {
   if (audio) audio.play().catch(() => {});
 }
 
-// ——— Sentiment hold over the entire utterance ———
-function setSentimentHold(expression, audio, weight = 0.6) {
+// --- Sentiment hold over the entire utterance ---
+function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
   if (!expression || expression === 'neutral') return;
   const mgr = getMgr();
   if (!mgr) return;
@@ -576,17 +576,33 @@ function setSentimentHold(expression, audio, weight = 0.6) {
   const key = expressionMap[expression] ?? expression;
   if (!key || key === 'neutral') return;
 
+  // Set sentimentLayer so animate() can detect active sentiment
+  const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
+  sentimentLayer = {
+    name: expression,
+    weight,
+    until: performance.now() + holdMs
+  };
+
+  // Apply immediately
   const apply = () => { mgr.setValue(key, weight); mgr.update(); };
   const clear = () => { mgr.setValue(key, 0.0); mgr.update(); };
 
-  // Keep reapplying during playback so it doesn't decay underneath
-  const onTime = () => apply();
-  const onEnd = () => {
-    audio.removeEventListener('timeupdate', onTime);
-    audio.removeEventListener('ended', onEnd);
-    // quick fade out
-    clear();
-  };
+  // If audio is provided, keep reapplying during playback
+  if (audio) {
+    const onTime = () => apply();
+    const onEnd = () => {
+      audio.removeEventListener('timeupdate', onTime);
+      audio.removeEventListener('ended', onEnd);
+      clear();
+    };
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('ended', onEnd);
+  } else {
+    // No audio — just apply once
+    apply();
+  }
+
 
   apply();
   audio.addEventListener('timeupdate', onTime);
@@ -915,15 +931,14 @@ if (document.readyState === 'loading') {
   initUI();
 }
 
-function setSentimentHold(name, audio, weight = 0.6, durationMs) {
-  // If no audio, default to 2s hold or custom duration
-  const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
-  sentimentLayer = {
-    name,
-    weight,
-    until: performance.now() + holdMs
-  };
+
+
+// Optional: clear sentiment instantly (e.g., in stopSpeaking())
+function clearSentiment() {
+  sentimentLayer = {};
 }
+
+// --- Main Animation Loop ---
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
@@ -950,16 +965,21 @@ function animate() {
     // Apply sentiment overlay if active
     if (sentimentActive) {
       const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
-      if (key && key !== 'neutral') mgr.setValue(key, sentimentLayer.weight ?? 0.6);
+      if (key && key !== 'neutral') {
+        mgr.setValue(key, sentimentLayer.weight ?? 0.6);
+      }
     }
 
     // Always update Blendfaces if present
     if (blendfaces) {
       blendfaces.update(dt);
     }
+
+    // Update gestures if present
     if (gestures) {
-  gestures.update();
-}
+      gestures.update();
+    }
+
     // Ambient behaviours
     handleBreath(t);
     handleGaze(dt);
@@ -969,8 +989,10 @@ function animate() {
     mgr?.update();
   }
 
-  renderer.render(scene, camera);}
+  renderer.render(scene, camera);
+}
 animate();
+
 
 // ——— Resize ———
 window.addEventListener('resize', () => {
