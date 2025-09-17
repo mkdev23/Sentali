@@ -30,6 +30,7 @@ let chestBaseY = 0;
 let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
+let visemeActive = false; // true while a viseme timeline/schedule is active
 
 // ——— Scene / Renderer / Camera ———
 const canvas = document.getElementById('c');
@@ -54,20 +55,20 @@ controls.update();
 
 // ——— Lighting (balanced three‑point) ———
 // Softer ambient
-scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
 // Warm key light (front-right)
-const key = new THREE.DirectionalLight(0xfff1e0, 1.1);
+const key = new THREE.DirectionalLight(0xfff1e0, 1.5);
 key.position.set(0.8, 1.2, 1.0);
 scene.add(key);
 
 // Cool fill light (front-left)
-const fill = new THREE.DirectionalLight(0xe0f0ff, 0.6);
+const fill = new THREE.DirectionalLight(0xe0f0ff, 0.9);
 fill.position.set(-0.8, 1.0, 0.8);
 scene.add(fill);
 
 // Neutral rim/back light
-const rim = new THREE.DirectionalLight(0xffffff, 0.5);
+const rim = new THREE.DirectionalLight(0xffffff, 0.8);
 rim.position.set(0, 1.0, -1.0);
 scene.add(rim);
 
@@ -437,7 +438,13 @@ function resolveToVRMKey(v) {
     : visemeMap[v.VisemeId ?? v.visemeId ?? v.id] ?? v.name ?? null;
   return alias ? expressionMap[alias] ?? null : null;
 }
-
+const VISEME_SCALE = {
+  aa: 0.45,
+  ee: 0.4,
+  ih: 0.35,
+  oh: 0.3,
+  ou: 0.25
+};
 
 const VISEME_HOLD_MS = 80;        // short hold for snappy syllables
 const VISEME_RELEASE_MS = 50;     // quick release so it keeps pace with text
@@ -572,6 +579,7 @@ function setSentimentHold(expression, audio, weight = 0.6) {
 }
 
 // ——— WebSocket: server‑pushed TTS/visemes/emotions ———
+// ——— WebSocket: server‑pushed TTS/visemes/emotions ———
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
   onOpen: () => console.log('WS connected'),
@@ -586,31 +594,41 @@ const wsClient = new WSClient({
     const audio = new Audio(audioUrl);
     audio.crossOrigin = 'anonymous';
 
-    audio.addEventListener('play', () => {
-      isSpeaking = true;
+    // Build timeline now and mark active before trying to play
+    const items = buildVisemeTimeline(visemes);
+    const lastMs = visemes.length ? visemes[visemes.length - 1].timeMs : 0;
+    const safetyMs = lastMs + 600;
 
-      // Sentiment overlay for entire utterance
-      setSentimentHold(expression, audio, 0.6);
+    // Ensure lipsync can't be stomped by idle bias even if autoplay blocks
+    visemeActive = true;
+    isSpeaking = true;
 
-      if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
-        const items = buildVisemeTimeline(visemes);
-        if (items.length) {
-          blendfaces.loadTimeline(items);
-          blendfaces.playTimeline(0, audio);
-        } else {
-          console.warn('[Visemes] No valid timeline items');
-        }
+    // Sentiment overlay for entire utterance
+    setSentimentHold(expression, audio, 0.6);
+
+    // Kick Blendfaces or manual scheduler immediately
+    if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
+      if (items.length) {
+        blendfaces.loadTimeline(items);
+        blendfaces.playTimeline(0, audio);
       } else {
-        scheduleVisemes(visemes, audio);
+        console.warn('[Visemes] No valid timeline items');
       }
-    }, { once: true });
+    } else {
+      scheduleVisemes(visemes, audio);
+    }
 
-    audio.addEventListener('ended', () => {
+    // Clear flags on end and via safety timeout
+    const clearFlags = () => {
+      visemeActive = false;
       isSpeaking = false;
       const mgr = getMgr();
       if (mgr) mgr.update();
-    });
+    };
+    audio.addEventListener('ended', clearFlags, { once: true });
+    setTimeout(clearFlags, safetyMs);
 
+    // Try to play audio; if it fails, timeline still ran
     audio.play().catch(e => console.warn('WS audio error', e));
   }
 });
@@ -675,13 +693,13 @@ async function speakAndType(text, agentDiv) {
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
 
-    // Ensure we know audio duration if possible
+    // Try to get duration; don't block if slow
     await new Promise((resolve) => {
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
       audio.addEventListener('loadedmetadata', finish, { once: true });
       audio.addEventListener('error', finish, { once: true });
-      setTimeout(finish, 350); // don't block if metadata is slow
+      setTimeout(finish, 350);
     });
 
     // Drive typing to match audio/viseme duration (keeps pace with the text box)
@@ -693,38 +711,45 @@ async function speakAndType(text, agentDiv) {
 
     const expression = body.expression || body.sentiment || 'neutral';
 
-    audio.addEventListener('play', () => {
-      isSpeaking = true;
+    // Build timeline now and mark active before trying to play
+    const items = buildVisemeTimeline(visemes);
+    const safetyMs = lastVisemeMs + 600;
 
-      // Sentiment overlay across the whole utterance
-      setSentimentHold(expression, audio, 0.6);
+    visemeActive = true;
+    isSpeaking = true;
 
-      // Start typing synced to duration
-      typeOut(agentDiv, 'agent', text, durationMs);
+    // Sentiment overlay across the whole utterance
+    setSentimentHold(expression, audio, 0.6);
 
-      if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
-        const items = buildVisemeTimeline(visemes);
-        if (items.length) {
-          blendfaces.loadTimeline(items);
-          blendfaces.playTimeline(0, audio);
-        } else {
-          console.warn('[Visemes] No valid timeline items');
-        }
+    // Start typing synced to duration
+    typeOut(agentDiv, 'agent', text, durationMs);
+
+    // Kick Blendfaces or manual scheduler immediately
+    if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
+      if (items.length) {
+        blendfaces.loadTimeline(items);
+        blendfaces.playTimeline(0, audio);
       } else {
-        scheduleVisemes(visemes, audio);
+        console.warn('[Visemes] No valid timeline items');
       }
-    }, { once: true });
+    } else {
+      scheduleVisemes(visemes, audio);
+    }
 
-    audio.addEventListener('ended', () => {
+    // Clear flags on end and via safety timeout
+    const clearFlags = () => {
+      visemeActive = false;
       isSpeaking = false;
       const mgr = getMgr();
       if (mgr) mgr.update();
-    });
+    };
+    audio.addEventListener('ended', clearFlags, { once: true });
+    setTimeout(clearFlags, safetyMs);
 
+    // Try to play audio; if it fails, typing and visemes still run
     audio.play().catch(err => {
       console.warn('[TTS] Play failed:', err);
-      typeOut(agentDiv, 'agent', text, durationMs);
-      isSpeaking = false;
+      // We already started timeline/scheduler; keep going
     });
   } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS timeout') {
@@ -734,11 +759,13 @@ async function speakAndType(text, agentDiv) {
     }
     updateChatEntry(agentDiv, 'agent', text);
     isSpeaking = false;
+    visemeActive = false;
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
   }
 }
+
 
 // ——— Chat UI helpers ———
 function addChatEntry(role, text) {
@@ -889,11 +916,12 @@ function animate() {
     const noActiveExpr = Object.keys(activeExpr).length === 0;
     const sentimentActive = sentimentLayer?.name && performance.now() <= sentimentLayer.until;
 
-    // Idle bias only if no visemes, no sentiment, and not speaking
-    if (mgr && !isSpeaking && noActiveExpr && !sentimentActive) {
-      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
-      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
-    }
+// Idle bias only if no visemes, no sentiment, and not speaking
+if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
+  if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
+  if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
+}
+
 
     // Apply persistent expressions
     applyExpressions(dt);
