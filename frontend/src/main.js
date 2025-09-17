@@ -567,16 +567,9 @@ function scheduleVisemes(visemes, audio) {
   if (audio) audio.play().catch(() => {});
 }
 
-// --- Sentiment hold over the entire utterance ---
 function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
   if (!expression || expression === 'neutral') return;
-  const mgr = getMgr();
-  if (!mgr) return;
 
-  const key = expressionMap[expression] ?? expression;
-  if (!key || key === 'neutral') return;
-
-  // Set sentimentLayer so animate() can detect active sentiment
   const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
   sentimentLayer = {
     name: expression,
@@ -584,32 +577,20 @@ function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
     until: performance.now() + holdMs
   };
 
-  // Apply immediately
-  const apply = () => { mgr.setValue(key, weight); mgr.update(); };
-  const clear = () => { mgr.setValue(key, 0.0); mgr.update(); };
-
-  // If audio is provided, keep reapplying during playback
-  if (audio) {
-    const onTime = () => apply();
-    const onEnd = () => {
-      audio.removeEventListener('timeupdate', onTime);
-      audio.removeEventListener('ended', onEnd);
-      clear();
-    };
-    audio.addEventListener('timeupdate', onTime);
-    audio.addEventListener('ended', onEnd);
-  } else {
-    // No audio — just apply once
-    apply();
+  // Apply once for instant feedback
+  const mgr = getMgr();
+  if (mgr) {
+    const key = expressionMap[expression] ?? expression;
+    if (key && key !== 'neutral') {
+      const current = mgr.getValue(key) ?? 0;
+      mgr.setValue(key, Math.min(1.0, current + weight));
+      mgr.update();
+    }
   }
-
-
-  apply();
-  audio.addEventListener('timeupdate', onTime);
-  audio.addEventListener('ended', onEnd, { once: true });
 }
 
-// ——— WebSocket: server‑pushed TTS/visemes/emotions ———
+
+
 // ——— WebSocket: server‑pushed TTS/visemes/emotions ———
 const wsClient = new WSClient({
   url: `wss://${window.location.host}/ws`,
@@ -963,12 +944,14 @@ function animate() {
     applyExpressions(dt);
 
     // Apply sentiment overlay if active
-    if (sentimentActive) {
-      const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
-      if (key && key !== 'neutral') {
-        mgr.setValue(key, sentimentLayer.weight ?? 0.6);
-      }
-    }
+if (sentimentActive) {
+  const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
+  if (key && key !== 'neutral') {
+    const current = mgr.getValue(key) ?? 0;
+    const target = Math.min(1.0, current + (sentimentLayer.weight ?? 0.6));
+    mgr.setValue(key, target);
+  }
+}
 
     // Always update Blendfaces if present
     if (blendfaces) {
