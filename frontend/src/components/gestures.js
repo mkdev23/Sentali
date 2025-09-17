@@ -39,7 +39,7 @@ export class GestureController {
 
     const t = elapsed / this.duration;
     const { humanoid } = this.vrm;
-    const tNorm = (elapsed % this.duration) / this.duration;
+    
     switch (this.active) {
       case 'wave': {
         const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
