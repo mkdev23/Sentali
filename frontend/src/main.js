@@ -53,10 +53,24 @@ controls.maxDistance = 6.0;
 controls.update();
 
 // ——— Lighting (balanced three‑point) ———
-scene.add(new THREE.AmbientLight(0xffffff, 0.25));
-const key = new THREE.DirectionalLight(0xfff2e5, 0.9);  key.position.set(0.5, 1, 0.8);  scene.add(key);
-const fill = new THREE.DirectionalLight(0xe5f0ff, 0.4); fill.position.set(-0.5, 0.8, -0.8); scene.add(fill);
-const rim  = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(0, 1, -1); scene.add(rim);
+// Softer ambient
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+// Warm key light (front-right)
+const key = new THREE.DirectionalLight(0xfff1e0, 1.1);
+key.position.set(0.8, 1.2, 1.0);
+scene.add(key);
+
+// Cool fill light (front-left)
+const fill = new THREE.DirectionalLight(0xe0f0ff, 0.6);
+fill.position.set(-0.8, 1.0, 0.8);
+scene.add(fill);
+
+// Neutral rim/back light
+const rim = new THREE.DirectionalLight(0xffffff, 0.5);
+rim.position.set(0, 1.0, -1.0);
+scene.add(rim);
+
 
 // ——— Groups ———
 const vrmGroup = new THREE.Group();
@@ -349,63 +363,63 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
-  // Parent once; keep local transforms untouched
-  vrm.scene.position.set(0, 0, 0);
-  vrm.scene.rotation.set(0, 0, 0);
+  // Add to group
   vrmGroup.add(vrm.scene);
 
-  // Scale avatar to ~1.7m tall for better presence in large skybox
+  // --- Scale avatar to ~1.75m tall ---
   const box = new THREE.Box3().setFromObject(vrm.scene);
-  const size = new THREE.Vector3(); box.getSize(size);
+  const size = new THREE.Vector3();
+  box.getSize(size);
   if (size.y > 0) {
-    const targetHeight = 1.7;
+    const targetHeight = 1.75; // meters in scene units
     const scaleFactor = targetHeight / size.y;
     vrm.scene.scale.setScalar(scaleFactor);
   }
 
-  // Face camera and frame the head
-  // 1) Aim target at current head
-  controls.target.copy(getHeadWorld(vrm));
-  // 2) Yaw-align to face target
-  faceCamera(vrm);
-  // 3) Place camera in front of face at preferred distance
-  frameFace(vrm, 4.5, 1.6);
+  // --- Place feet at y=0 ---
+  box.setFromObject(vrm.scene);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const yOffset = box.min.y;
+  vrm.scene.position.y -= yOffset; // drop so feet touch ground
+
+  // --- Rotate camera 180° and face avatar ---
+  vrm.scene.rotation.y = Math.PI; // turn avatar to face camera
+  const head = vrm.humanoid.getNormalizedBoneNode('head') || vrm.scene.getObjectByName('Head');
+  if (head) {
+    const headPos = new THREE.Vector3();
+    head.getWorldPosition(headPos);
+    controls.target.copy(headPos);
+    // Zoom in closer to face
+    camera.position.set(headPos.x, headPos.y, headPos.z + 1.2); // ~1.2 units in front
+  }
+  controls.update();
 
   // Cache chest height for breathing
   const chest = vrm.humanoid.getNormalizedBoneNode('chest')
              || vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
 
-  // Optional: small arm abduction to avoid clipping into legs (runtime nudge)
-  const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-  const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-  if (lArm && rArm) {
-    lArm.rotation.z += THREE.MathUtils.degToRad(6);
-    rArm.rotation.z -= THREE.MathUtils.degToRad(6);
-  }
-
   // Merge available expressions into viseme map
   const available = exprMgr.getExpressionNames?.() ?? [];
-  ['aa','ee','ih','oh','ou','neutral'].forEach(alias => {
+  ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].forEach(alias => {
     if (available.includes(alias)) expressionMap[alias] = alias;
   });
 
-  // Lipsync/blink controller (snappier; toned-down OH/OU handled by scheduler too)
+  // Init lipsync/blink controller
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
-    smooth: 0.2,  // faster attack
-    decay: 3.0,   // faster release
+    smooth: 0.2,
+    decay: 3.0,
     rest: { blink: 0.0 },
-    scale: { aa: 0.55, ee: 0.48, ih: 0.42, oh: 0.42, ou: 0.38 }
+    scale: { aa: 0.55, ee: 0.48, ih: 0.42, oh: 0.40, ou: 0.34 }
   });
   blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
 
-  // Disable first-person culling
   if (vrm.firstPerson) vrm.firstPerson.autoUpdate = false;
 
-  console.log('[VRM] Loaded:', vrm.meta?.name, 'Expressions:', available);
+  console.log('[VRM] Loaded successfully:', vrm.meta?.name);
 });
-
 // ——— Viseme ID → alias (keep as-is if your backend sends IDs) ———
 const visemeMap = {
   0: 'neutral',
