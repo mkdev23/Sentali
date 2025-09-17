@@ -814,7 +814,19 @@ function typeOut(el, role, text, durationMs) {
   requestAnimationFrame(frame);
 }
 
-// ——— Chat send ———
+// --- Greeting trigger helper ---
+function handleGreetingTrigger(message) {
+  if (!message || typeof message !== 'string') return;
+  if (typeof gestures?.play !== 'function' || typeof setSentimentHold !== 'function') return;
+
+  const msg = message.trim().toLowerCase();
+  if (msg === 'hi' || msg === 'hello' || msg.startsWith('hi ') || msg.startsWith('hello ')) {
+    gestures.play('wave');
+    setSentimentHold('happy', null, 0.8, 1500);
+  }
+}
+
+// --- Chat send ---
 let sendingNow = false;
 async function sendToAgent() {
   if (sendingNow) return;
@@ -832,6 +844,9 @@ async function sendToAgent() {
     sendingNow = false;
     return;
   }
+
+  // Trigger greeting gestures/sentiment if applicable
+  handleGreetingTrigger(msg);
 
   addChatEntry('user', msg);
   inputEl.value = '';
@@ -865,6 +880,8 @@ async function sendToAgent() {
     sendingNow = false;
   }
 }
+
+
 
 // ——— Mic button ———
 function initMicButton() {
