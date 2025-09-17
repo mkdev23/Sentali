@@ -361,12 +361,14 @@ function shouldUseBlendfaces() {
 }
 
 let gestures;
+
 // ——— VRM Load ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
+  // Gesture controller
   gestures = new GestureController(vrm);
 
   // Add to group
@@ -377,34 +379,32 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   const size = new THREE.Vector3();
   box.getSize(size);
   if (size.y > 0) {
-    const targetHeight = 1.75; // meters in scene units
+    const targetHeight = 1.75;
     const scaleFactor = targetHeight / size.y;
     vrm.scene.scale.setScalar(scaleFactor);
   }
-// --- Small arm rotation to prevent clipping into body ---
-const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-if (lArm && rArm) {
-  // Rotate slightly outward on Z axis
-  lArm.rotation.z += THREE.MathUtils.degToRad(6);
-  rArm.rotation.z -= THREE.MathUtils.degToRad(6);
-}
+
+  // --- Small arm rotation to prevent clipping into body ---
+  const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+  const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+  if (lArm && rArm) {
+    lArm.rotation.z += THREE.MathUtils.degToRad(6);
+    rArm.rotation.z -= THREE.MathUtils.degToRad(6);
+  }
+
   // --- Place feet at y=0 ---
   box.setFromObject(vrm.scene);
-  const center = new THREE.Vector3();
-  box.getCenter(center);
   const yOffset = box.min.y;
-  vrm.scene.position.y -= yOffset; // drop so feet touch ground
+  vrm.scene.position.y -= yOffset;
 
-  // --- Rotate camera 180° and face avatar ---
-  vrm.scene.rotation.y = Math.PI; // turn avatar to face camera
+  // --- Rotate camera to face avatar ---
+  vrm.scene.rotation.y += Math.PI;
   const head = vrm.humanoid.getNormalizedBoneNode('head') || vrm.scene.getObjectByName('Head');
   if (head) {
     const headPos = new THREE.Vector3();
     head.getWorldPosition(headPos);
     controls.target.copy(headPos);
-    // Zoom in closer to face
-    camera.position.set(headPos.x, headPos.y, headPos.z - 1.2); // ~1.2 units in front
+    camera.position.set(headPos.x, headPos.y, headPos.z + 1.2);
   }
   controls.update();
 
@@ -413,10 +413,12 @@ if (lArm && rArm) {
              || vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
 
-  // Merge available expressions into viseme map
+  // Merge available expressions into viseme map WITHOUT overwriting Unity mappings
   const available = exprMgr.getExpressionNames?.() ?? [];
   ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].forEach(alias => {
-    if (available.includes(alias)) expressionMap[alias] = alias;
+    if (!expressionMap[alias] && available.includes(alias)) {
+      expressionMap[alias] = alias;
+    }
   });
 
   // Init lipsync/blink controller
@@ -433,6 +435,7 @@ if (lArm && rArm) {
 
   console.log('[VRM] Loaded successfully:', vrm.meta?.name);
 });
+
 // ——— Viseme ID → alias (keep as-is if your backend sends IDs) ———
 const visemeMap = {
   0: 'neutral',
@@ -912,7 +915,15 @@ if (document.readyState === 'loading') {
   initUI();
 }
 
-
+function setSentimentHold(name, audio, weight = 0.6, durationMs) {
+  // If no audio, default to 2s hold or custom duration
+  const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
+  sentimentLayer = {
+    name,
+    weight,
+    until: performance.now() + holdMs
+  };
+}
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
@@ -927,12 +938,11 @@ function animate() {
     const noActiveExpr = Object.keys(activeExpr).length === 0;
     const sentimentActive = sentimentLayer?.name && performance.now() <= sentimentLayer.until;
 
-// Idle bias only if no visemes, no sentiment, and not speaking
-if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
-  if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
-  if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
-}
-
+    // Idle bias only if no visemes, no sentiment, and not speaking
+    if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
+      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
+      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
+    }
 
     // Apply persistent expressions
     applyExpressions(dt);
