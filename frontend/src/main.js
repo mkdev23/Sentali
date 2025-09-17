@@ -24,7 +24,6 @@ let ttsAbortController = null;
 const clock = new THREE.Clock();
 const activeExpr = {};
 const DECAY_EMO = 3.0;
-const DECAY_VISEME = 10.0;
 const SMOOTH = 0.4;
 
 let chestBaseY = 0;
@@ -39,7 +38,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.9; // Slightly reduced to avoid facial washout
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
@@ -53,19 +52,23 @@ controls.minDistance = 1.0;
 controls.maxDistance = 6.0;
 controls.update();
 
-// Lighting
-scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-[
-  [0.5, 1, 0.8, 1.2],
-  [-0.5, 0.8, -0.8, 0.6],
-  [0, 1, -1, 0.8]
-].forEach(([x, y, z, intensity]) => {
-  const dl = new THREE.DirectionalLight(0xffffff, intensity);
-  dl.position.set(x, y, z);
-  scene.add(dl);
-});
+// ——— Lighting (balanced three‑point) ———
+scene.add(new THREE.AmbientLight(0xffffff, 0.25)); // softer ambient
 
-// Groups
+const key = new THREE.DirectionalLight(0xfff2e5, 0.9);   // warm key
+key.position.set(0.5, 1, 0.8);
+key.castShadow = false;
+scene.add(key);
+
+const fill = new THREE.DirectionalLight(0xe5f0ff, 0.4); // cool fill
+fill.position.set(-0.5, 0.8, -0.8);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0xffffff, 0.5);  // neutral rim
+rim.position.set(0, 1, -1);
+scene.add(rim);
+
+// ——— Groups ———
 const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
 scene.add(vrmGroup, skyGroup);
@@ -76,6 +79,45 @@ function getMgr() {
 }
 function isMobile() {
   return /Mobi|Android/i.test(navigator.userAgent);
+}
+
+// Get head bone world position (for accurate camera target)
+function getHeadWorld(vrm) {
+  const head =
+    vrm?.humanoid?.getNormalizedBoneNode?.('head') ||
+    vrm?.scene?.getObjectByName?.('Head');
+  if (!head) return new THREE.Vector3(0, 1.6, 0);
+  const p = new THREE.Vector3();
+  head.getWorldPosition(p);
+  return p;
+}
+
+// Yaw-align avatar so head faces the camera target without touching bones
+function orientAvatarToCamera(vrm) {
+  const headPos = getHeadWorld(vrm);
+  const toCam = new THREE.Vector3().subVectors(controls.target, headPos);
+  toCam.y = 0; // project to XZ
+  if (toCam.lengthSq() < 1e-6) return;
+
+  // Current avatar forward in world (assume +Z in local; adjust using world matrix)
+  const fwdLocal = new THREE.Vector3(0, 0, 1);
+  const fwdWorld = fwdLocal.applyQuaternion(vrm.scene.getWorldQuaternion(new THREE.Quaternion()));
+  fwdWorld.y = 0;
+
+  if (fwdWorld.lengthSq() < 1e-6) return;
+
+  const desiredYaw = Math.atan2(-toCam.x, -toCam.z); // face toward camera target
+  const currentYaw = Math.atan2(fwdWorld.x, fwdWorld.z);
+  const deltaYaw = desiredYaw - currentYaw;
+  vrm.scene.rotation.y += deltaYaw;
+}
+
+// Maintain authored transforms: no recentering or reparenting after this point
+function setCameraToHead(vrm, distance = 4.5, height = 1.6) {
+  const headPos = getHeadWorld(vrm);
+  controls.target.copy(headPos);
+  camera.position.set(headPos.x, height, headPos.z + distance);
+  controls.update();
 }
 
 // ——— Skybox loader with fallback ———
@@ -97,7 +139,6 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
 (async () => {
   try {
     if (isMobile()) {
-      console.log('[Skybox] Using mobile PNG fallback');
       const loader = new THREE.TextureLoader();
       const texture = await loader.loadAsync('/skybox/background1.png');
       texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -141,7 +182,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
   }
 })();
 
-// ——— Expression management ———
+// ——— Expression management (persistent moods/emotes) ———
 function setExpressionPersistent(name, weight, decay = DECAY_EMO) {
   const mapped = expressionMap[name] ?? name;
   activeExpr[mapped] = { weight, decay };
@@ -209,53 +250,60 @@ function handleBreath(t) {
   if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
 }
 
+// ——— VRM Load ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
-  // Add to group, face camera
+  // Parent once; keep local transforms untouched (preserve authored bind pose)
+  vrm.scene.rotation.y = Math.PI; // initial guess; we'll refine below
+  vrm.scene.position.set(0, 0, 0);
   vrmGroup.add(vrm.scene);
-  vrm.scene.rotation.y = Math.PI;
-
-  // Aim camera/orbit at head height
-  controls.target.set(0, 1.6, 0);
-  controls.update();
 
   // Cache chest height for breathing
   const chest = vrm.humanoid.getNormalizedBoneNode('chest')
              || vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
 
-  // Merge available expressions into viseme map
+  // Map available visemes
   const available = exprMgr.getExpressionNames?.() ?? [];
   ['aa', 'ee', 'ih', 'oh', 'ou', 'neutral'].forEach(alias => {
     if (available.includes(alias)) expressionMap[alias] = alias;
   });
+  // Optional: if OU is too strong or missing, map to OH
+  // if (!available.includes('ou')) expressionMap.ou = expressionMap.oh;
 
-  // Init lipsync/blink controller with viseme scaling
-  blendfaces = new BlendfacesController(vrm, {
-    expressionMap,
-    smooth: 0.4,
-    decay: 1.5,
-    rest: { blink: 0.0 },
-    scale: {        // tone down mouth shapes
-      aa: 0.6,      // was 1.0
-      ee: 0.5,
-      ih: 0.45,
-      oh: 0.55,
-      ou: 0.5
-    }
-  });
-  blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
+  // Align camera to head, then yaw-align avatar to actually face the camera target
+  setCameraToHead(vrm, 4.5, 1.6);
+  orientAvatarToCamera(vrm);
+  setCameraToHead(vrm, 4.5, 1.6); // re-aim after yaw alignment
 
   // Disable first-person culling
   if (vrm.firstPerson) vrm.firstPerson.autoUpdate = false;
 
-  console.log('[VRM] Loaded successfully:', vrm.meta?.name);
+  // Lipsync/blink with toned-down, snappier visemes
+  blendfaces = new BlendfacesController(vrm, {
+    expressionMap,
+    smooth: 0.25,  // faster attack (snappier)
+    decay: 2.4,    // faster release (less mush)
+    rest: { blink: 0.0 },
+    scale: {
+      aa: 0.55,
+      ee: 0.48,
+      ih: 0.42,
+      oh: 0.5,
+      ou: 0.46
+    },
+    // Optional: deadzone to avoid micro-flutter (if supported)
+    // deadzone: 0.06
+  });
+  blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
+
+  console.log('[VRM] Loaded:', vrm.meta?.name, 'Expressions:', available);
 });
 
-// ——— Viseme mapping (ID → alias) ———
+// ——— Viseme ID → alias (keep as-is if your backend sends IDs) ———
 const visemeMap = {
   0: 'neutral',
   1: 'aa', 2: 'aa', 3: 'ih', 4: 'ee', 5: 'oh',
