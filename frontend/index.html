@@ -7,6 +7,7 @@
   <!-- Preload skybox GLB for faster load (replace with your optimized URL) -->
   <link rel="preload" as="fetch" href="https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D" crossorigin="anonymous">
   <style>
+    
     html, body, #c {
       width: 100%;
       height: 100%;
@@ -46,36 +47,38 @@
     label { color: white; font-size: 14px; }
 
     /* Chat log above chat bar */
-    #chat-log {
+      #chat-log {
       position: fixed;
-      bottom: 48px;
+      bottom: calc(var(--chat-bar-height, 72px)); /* adjust to match actual bar height */
       left: 0;
       width: 100%;
-      max-height: 150px;
+      top: auto;
+      max-height: calc(100% - var(--chat-bar-height, 72px) - 12px);
       overflow-y: auto;
       background: rgba(0,0,0,0.5);
       padding: 6px;
       font-size: 13px;
       color: #ddd;
       z-index: 9;
-    }
+      }
     .chat-entry { margin-bottom: 4px; }
     .chat-user { color: #90caf9; }
     .chat-agent { color: #a5d6a7; }
 
     /* Bottom chat bar */
-    #chat-bar {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      background: rgba(0,0,0,0.75);
-      padding: 8px;
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      z-index: 10;
-    }
+#chat-bar {
+  --chat-bar-height: 72px; /* keep this in sync with actual height */
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: rgba(0,0,0,0.75);
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  z-index: 10;
+}
 
     #agentInput {
       flex: 1;
@@ -85,9 +88,35 @@
       background: #222;
       color: white;
     }
+    .code-block-container {
+  background: #f6f8fa;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 8px 0;
+    }
+    .code-toolbar {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-bottom: 4px;
+    }
+    .lang-label {
+      margin-right: auto;
+      font-weight: bold;
+    }
+    .code-output {
+      background: #fff;
+      border-top: 1px solid #ddd;
+      padding: 6px;
+      margin-top: 4px;
+    }
+
   </style>
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/main.jsx"></script>
 </head>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
 <body>
   <!-- Top-left controls -->
   <div id="control-panel">
@@ -97,12 +126,28 @@
   <!-- Chat log -->
   <div id="chat-log"></div>
 
-  <!-- Bottom chat bar -->
-  <div id="chat-bar">
-    <input type="text" id="agentInput" placeholder="Ask Sentali..." />
-    <button id="agentSendBtn">Send</button>
-    <button id="micBtn" title="Speak to Sentali">🎤</button>
-  </div>
+
+<!-- Bottom chat bar -->
+<div id="chat-bar">
+  <textarea
+    id="agentInput"
+    placeholder="Ask Sentali..."
+    rows="2"
+    style="
+      flex: 1;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #222;
+      color: white;
+      resize: vertical;
+      font-family: sans-serif;
+      font-size: 14px;
+    "
+  ></textarea>
+  <button id="agentSendBtn">Send</button>
+  <button id="micBtn" title="Speak to Sentali">🎤</button>
+</div>
 
   <!-- VRM canvas -->
   <canvas id="c"></canvas>
@@ -113,4 +158,3 @@
 
 
 
-  <script type="module" src="/src/main.js"></script>

@@ -6,8 +6,11 @@ import { loadVRM } from './vrmUtils.js';
 import { WSClient } from './ws.js';
 import { BlendfacesController } from './blendfaces.js';
 import { loadGLBSkybox } from './SkyBoxGLBLoader.js';
-import { GestureController } from './gestures.js';
-
+import { GestureController } from './components/gestures.js';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import ChatBlock from './components/ChatBlock.jsx';
+import ChatMessage from './components/ChatMessage.jsx';
 // ——— Config & Globals ———
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
@@ -784,34 +787,34 @@ function addChatEntry(role, text) {
   if (!log) {
     console.warn('[UI] #chat-log not found');
     return null;
-    }
+  }
+
   const div = document.createElement('div');
   div.className = 'chat-entry';
-  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text || ''}`;
+
+  // Render using ChatBlock + ChatMessage
+  const root = ReactDOM.createRoot(div);
+  root.render(
+    <ChatBlock>
+      <ChatMessage message={{ role, text }} />
+    </ChatBlock>
+  );
+
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
 }
+
 function updateChatEntry(div, role, text) {
   if (!div) return;
-  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
-}
-function typeOut(el, role, text, durationMs) {
-  if (!el) return;
-  const start = performance.now();
-  const total = text.length;
-  const label = `<span class="chat-${role}">${role}:</span> `;
-  const spanId = `typing-${Math.random().toString(36).slice(2)}`;
-  el.innerHTML = `${label}<span id="${spanId}"></span>`;
-  const span = el.querySelector(`#${spanId}`);
-  function frame(now) {
-    const elapsed = now - start;
-    const t = Math.min(1, durationMs > 0 ? elapsed / durationMs : 1);
-    const count = Math.floor(total * t);
-    if (span) span.textContent = text.slice(0, count);
-    if (count < total) requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
+
+  // Re-render using ChatBlock + ChatMessage
+  const root = ReactDOM.createRoot(div);
+  root.render(
+    <ChatBlock>
+      <ChatMessage message={{ role, text }} />
+    </ChatBlock>
+  );
 }
 
 // --- Greeting trigger helper ---
@@ -881,8 +884,6 @@ async function sendToAgent() {
   }
 }
 
-
-
 // ——— Mic button ———
 function initMicButton() {
   const micBtn = document.getElementById('micBtn');
@@ -912,22 +913,29 @@ function initUI() {
   const sendBtn = document.getElementById('agentSendBtn');
   const inputEl = document.getElementById('agentInput');
 
-  if (sendBtn) sendBtn.addEventListener('click', sendToAgent);
+  if (sendBtn) {
+    sendBtn.addEventListener('click', sendToAgent);
+  }
+
   if (inputEl) {
     inputEl.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
+        e.preventDefault(); // prevent newline
         sendToAgent();
       }
+      // Shift+Enter will naturally insert a newline
     });
   }
+
   initMicButton();
 }
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initUI, { once: true });
 } else {
   initUI();
 }
+
 
 
 let lastSentimentActive = false;
