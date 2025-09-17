@@ -1,6 +1,7 @@
 // gestures.js
 import * as THREE from 'three';
 
+  
 export class GestureController {
   constructor(vrm) {
     this.vrm = vrm;
@@ -34,15 +35,16 @@ export class GestureController {
       this.reset();
       return;
     }
+  
 
     const t = elapsed / this.duration;
     const { humanoid } = this.vrm;
-
+    const tNorm = (elapsed % this.duration) / this.duration;
     switch (this.active) {
-case 'wave': {
-  const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
-  const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
-  const hand  = humanoid.getNormalizedBoneNode('rightHand');
+      case 'wave': {
+        const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
+        const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
+        const hand = humanoid.getNormalizedBoneNode('rightHand');
 
   if (upper && lower && hand) {
     // Keep arm lifted parallel to floor

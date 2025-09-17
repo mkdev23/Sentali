@@ -707,14 +707,12 @@ async function analyzeWithAnyRun(url) {
   }
 }
 
-// Reusable typewriter helper
-async function typeOut(agentDiv, role, text, totalDurationMs) {
-  // Detect if this is a code block (triple backticks or "looks like code")
+// Reusable typewriter helper — index-based
+async function typeOut(index, role, text, totalDurationMs) {
   const codeMatch = text.match(/```(\w+)?\n([\s\S]*?)\n```/);
   const isLikelyCode = /import|function|const|let|class|=>/.test(text);
 
   if (codeMatch || isLikelyCode) {
-    // Extract just the code content if wrapped in backticks
     const codeContent = codeMatch ? codeMatch[2] : text;
     const lines = codeContent.split('\n');
     const delay = totalDurationMs / Math.max(lines.length, 1);
@@ -722,29 +720,29 @@ async function typeOut(agentDiv, role, text, totalDurationMs) {
     let current = '';
     for (let i = 0; i < lines.length; i++) {
       current += (i > 0 ? '\n' : '') + lines[i];
-      updateChatEntry(agentDiv, role, current);
+      updateChatEntry(index, role, current);
       await new Promise(r => setTimeout(r, delay));
     }
   } else {
-    // Normal text: type character-by-character
     const chars = [...text];
     const delay = totalDurationMs / Math.max(chars.length, 1);
 
     let current = '';
     for (let i = 0; i < chars.length; i++) {
       current += chars[i];
-      updateChatEntry(agentDiv, role, current);
+      updateChatEntry(index, role, current);
       await new Promise(r => setTimeout(r, delay));
     }
   }
 }
 
 
-async function speakAndType(text, agentDiv) {
+
+async function speakAndType(text, index) {
   if (ttsInflight) {
     console.warn('[TTS] In-flight; aborting previous');
     ttsAbortController?.abort();
-    updateChatEntry(agentDiv, 'agent', text);
+    updateChatEntry(index, 'agent', text);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
@@ -763,14 +761,14 @@ async function speakAndType(text, agentDiv) {
     ]);
     if (!res.ok) {
       console.error('[TTS] HTTP', res.status);
-      updateChatEntry(agentDiv, 'agent', text);
+      updateChatEntry(index, 'agent', text);
       return;
     }
 
     const body = await res.json().catch(() => null);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl', body);
-      updateChatEntry(agentDiv, 'agent', text);
+      updateChatEntry(index, 'agent', text);
       return;
     }
 
@@ -780,7 +778,6 @@ async function speakAndType(text, agentDiv) {
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
 
-    // Try to get duration; don't block if slow
     await new Promise((resolve) => {
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -804,8 +801,7 @@ async function speakAndType(text, agentDiv) {
 
     setSentimentHold(expression, audio, 0.6);
 
-    // Start typing and audio/visemes together
-    const typingPromise = typeOut(agentDiv, 'agent', text, durationMs);
+    const typingPromise = typeOut(index, 'agent', text, durationMs);
 
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
@@ -830,7 +826,6 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Play failed:', err);
     });
 
-    // Wait for typing to finish before exiting
     await typingPromise;
 
   } catch (err) {
@@ -839,7 +834,7 @@ async function speakAndType(text, agentDiv) {
     } else {
       console.warn('[TTS] Timeout after 60s');
     }
-    updateChatEntry(agentDiv, 'agent', text);
+    updateChatEntry(index, 'agent', text);
     isSpeaking = false;
     visemeActive = false;
   } finally {
@@ -850,41 +845,38 @@ async function speakAndType(text, agentDiv) {
 
 
 // ——— Chat UI helpers ———
-function addChatEntry(role, text) {
+let chatMessages = [];
+let chatRoot = null;
+
+function initChatLog() {
   const log = document.getElementById('chat-log');
   if (!log) {
     console.warn('[UI] #chat-log not found');
-    return null;
+    return;
   }
-
-  const div = document.createElement('div');
-  div.className = 'chat-entry';
-
-  // Render using ChatBlock + ChatMessage
-  const root = ReactDOM.createRoot(div);
-  root.render(
-    <ChatBlock>
-      <ChatMessage message={{ role, text }} />
-    </ChatBlock>
-  );
-
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
+  chatRoot = ReactDOM.createRoot(log);
+  renderChat();
 }
 
-function updateChatEntry(div, role, text) {
-  if (!div) return;
-
-  // Re-render using ChatBlock + ChatMessage
-  const root = ReactDOM.createRoot(div);
-  root.render(
-    <ChatBlock>
-      <ChatMessage message={{ role, text }} />
-    </ChatBlock>
+function renderChat() {
+  if (!chatRoot) return;
+  chatRoot.render(
+    <ChatBlock messages={chatMessages} onRunCode={onRunCode} />
   );
 }
 
+function addChatEntry(role, text) {
+  chatMessages.push({ role, text });
+  renderChat();
+  return chatMessages.length - 1; // return index for update
+}
+
+function updateChatEntry(index, role, text) {
+  if (chatMessages[index]) {
+    chatMessages[index] = { role, text };
+    renderChat();
+  }
+}
 // --- Greeting trigger helper ---
 function handleGreetingTrigger(message) {
   if (!message || typeof message !== 'string') return;
@@ -916,7 +908,6 @@ async function sendToAgent() {
     return;
   }
 
-  // ✅ Now safe to check for scan command
   if (msg.startsWith('scan ')) {
     const url = msg.slice(5).trim();
     analyzeWithAnyRun(url);
@@ -924,7 +915,6 @@ async function sendToAgent() {
     return;
   }
 
-  // Trigger greeting gestures/sentiment if applicable
   handleGreetingTrigger(msg);
 
   addChatEntry('user', msg);
@@ -950,44 +940,9 @@ async function sendToAgent() {
       return;
     }
 
-    const agentDiv = addChatEntry('agent', '');
-    await speakAndType(reply, agentDiv);
-  } catch (err) {
-    console.error('[Agent Error]', err);
-    addChatEntry('agent', '[Error contacting Agent]');
-  } finally {
-    sendingNow = false;
-  }
+    const agentIndex = addChatEntry('agent', '');
+    await speakAndType(reply, agentIndex);
 
-
-  // Trigger greeting gestures/sentiment if applicable
-  handleGreetingTrigger(msg);
-
-  addChatEntry('user', msg);
-  inputEl.value = '';
-
-  try {
-    const chatRes = await fetch(`${backendBase}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: msg })
-    });
-    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
-    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-    if (!chatRes.ok) {
-      console.error('[Chat Error]', chatRes.status, body);
-      addChatEntry('agent', '[Error contacting Agent]');
-      return;
-    }
-
-    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
-    if (!reply) {
-      addChatEntry('agent', '[No response]');
-      return;
-    }
-
-    const agentDiv = addChatEntry('agent', '');
-    await speakAndType(reply, agentDiv);
   } catch (err) {
     console.error('[Agent Error]', err);
     addChatEntry('agent', '[Error contacting Agent]');
@@ -995,7 +950,6 @@ async function sendToAgent() {
     sendingNow = false;
   }
 }
-
 // ——— Mic button ———
 function initMicButton() {
   const micBtn = document.getElementById('micBtn');
