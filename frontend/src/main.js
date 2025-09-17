@@ -665,6 +665,18 @@ function sanitizeForTTS(s) {
   return out.trim();
 }
 
+// --- Greeting trigger helper ---
+function handleGreetingTrigger(message) {
+  const msg = message.trim().toLowerCase();
+
+  // Match common greetings
+  if (gestures && (msg === 'hi' || msg === 'hello' || msg.startsWith('hi ') || msg.startsWith('hello '))) {
+    gestures.play('wave'); // wave gesture
+    setSentimentHold('happy', null, 0.8, 1500); // smile for 1.5s
+  }
+}
+
+// --- Speak and type ---
 async function speakAndType(text, agentDiv) {
   if (ttsInflight) {
     console.warn('[TTS] In-flight; aborting previous');
@@ -705,7 +717,6 @@ async function speakAndType(text, agentDiv) {
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
 
-    // Try to get duration; don't block if slow
     await new Promise((resolve) => {
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -714,7 +725,6 @@ async function speakAndType(text, agentDiv) {
       setTimeout(finish, 350);
     });
 
-    // Drive typing to match audio/viseme duration (keeps pace with the text box)
     const durationMs = Math.max(
       (audio.duration > 0 ? audio.duration * 1000 : 0),
       lastVisemeMs + 250,
@@ -723,20 +733,16 @@ async function speakAndType(text, agentDiv) {
 
     const expression = body.expression || body.sentiment || 'neutral';
 
-    // Build timeline now and mark active before trying to play
     const items = buildVisemeTimeline(visemes);
     const safetyMs = lastVisemeMs + 600;
 
     visemeActive = true;
     isSpeaking = true;
 
-    // Sentiment overlay across the whole utterance
     setSentimentHold(expression, audio, 0.6);
 
-    // Start typing synced to duration
     typeOut(agentDiv, 'agent', text, durationMs);
 
-    // Kick Blendfaces or manual scheduler immediately
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
         blendfaces.loadTimeline(items);
@@ -748,7 +754,6 @@ async function speakAndType(text, agentDiv) {
       scheduleVisemes(visemes, audio);
     }
 
-    // Clear flags on end and via safety timeout
     const clearFlags = () => {
       visemeActive = false;
       isSpeaking = false;
@@ -758,10 +763,8 @@ async function speakAndType(text, agentDiv) {
     audio.addEventListener('ended', clearFlags, { once: true });
     setTimeout(clearFlags, safetyMs);
 
-    // Try to play audio; if it fails, typing and visemes still run
     audio.play().catch(err => {
       console.warn('[TTS] Play failed:', err);
-      // We already started timeline/scheduler; keep going
     });
   } catch (err) {
     if (err.name !== 'AbortError' && err.message !== 'TTS timeout') {
@@ -778,43 +781,7 @@ async function speakAndType(text, agentDiv) {
   }
 }
 
-// ——— Chat UI helpers ———
-function addChatEntry(role, text) {
-  const log = document.getElementById('chat-log');
-  if (!log) {
-    console.warn('[UI] #chat-log not found');
-    return null;
-    }
-  const div = document.createElement('div');
-  div.className = 'chat-entry';
-  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text || ''}`;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
-}
-function updateChatEntry(div, role, text) {
-  if (!div) return;
-  div.innerHTML = `<span class="chat-${role}">${role}:</span> ${text}`;
-}
-function typeOut(el, role, text, durationMs) {
-  if (!el) return;
-  const start = performance.now();
-  const total = text.length;
-  const label = `<span class="chat-${role}">${role}:</span> `;
-  const spanId = `typing-${Math.random().toString(36).slice(2)}`;
-  el.innerHTML = `${label}<span id="${spanId}"></span>`;
-  const span = el.querySelector(`#${spanId}`);
-  function frame(now) {
-    const elapsed = now - start;
-    const t = Math.min(1, durationMs > 0 ? elapsed / durationMs : 1);
-    const count = Math.floor(total * t);
-    if (span) span.textContent = text.slice(0, count);
-    if (count < total) requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-}
-
-// ——— Chat send ———
+// --- Chat send ---
 let sendingNow = false;
 async function sendToAgent() {
   if (sendingNow) return;
@@ -835,6 +802,9 @@ async function sendToAgent() {
 
   addChatEntry('user', msg);
   inputEl.value = '';
+
+  // Trigger greeting gestures/sentiment if applicable
+  handleGreetingTrigger(msg);
 
   try {
     const chatRes = await fetch(`${backendBase}/api/chat`, {
@@ -865,6 +835,7 @@ async function sendToAgent() {
     sendingNow = false;
   }
 }
+
 
 // ——— Mic button ———
 function initMicButton() {
@@ -913,7 +884,7 @@ if (document.readyState === 'loading') {
 }
 
 
-
+let lastSentimentActive = false;
 // Optional: clear sentiment instantly (e.g., in stopSpeaking())
 function clearSentiment() {
   sentimentLayer = {};
@@ -939,6 +910,8 @@ function animate() {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
       if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
     }
+    lastSentimentActive = sentimentActive;
+
     // Idle bias only if no visemes, no sentiment, and not speaking
     if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
