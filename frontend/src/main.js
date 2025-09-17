@@ -913,7 +913,7 @@ if (document.readyState === 'loading') {
 }
 
 
-
+let lastSentimentActive = false;
 // Optional: clear sentiment instantly (e.g., in stopSpeaking())
 function clearSentiment() {
   sentimentLayer = {};
@@ -939,6 +939,7 @@ function animate() {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
       if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
     }
+    lastSentimentActive = sentimentActive;
     // Idle bias only if no visemes, no sentiment, and not speaking
     if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
