@@ -391,7 +391,7 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     head.getWorldPosition(headPos);
     controls.target.copy(headPos);
     // Zoom in closer to face
-    camera.position.set(headPos.x, headPos.y, headPos.z - 1.2); // ~1.2 units in front
+    camera.position.set(headPos.x, headPos.y, headPos.z + 1.2); // ~1.2 units in front
   }
   controls.update();
 
@@ -875,6 +875,7 @@ if (document.readyState === 'loading') {
 }
 
 
+// ——— Animation loop ———
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
@@ -889,13 +890,13 @@ function animate() {
     const noActiveExpr = Object.keys(activeExpr).length === 0;
     const sentimentActive = sentimentLayer?.name && performance.now() <= sentimentLayer.until;
 
-    // Idle bias only if no visemes, no sentiment, and not speaking
+    // Idle bias only if no sentiment and no active expressions
     if (mgr && !isSpeaking && noActiveExpr && !sentimentActive) {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
       if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
     }
 
-    // Apply persistent expressions
+    // Apply persistent expressions (e.g., from setExpressionPersistent)
     applyExpressions(dt);
 
     // Apply sentiment overlay if active
@@ -904,8 +905,8 @@ function animate() {
       if (key && key !== 'neutral') mgr.setValue(key, sentimentLayer.weight ?? 0.6);
     }
 
-    // Always update Blendfaces if present
-    if (blendfaces) {
+    // Update Blendfaces (visemes/blinks)
+    if (shouldUseBlendfaces()) {
       blendfaces.update(dt);
     }
 
@@ -914,11 +915,11 @@ function animate() {
     handleGaze(dt);
     handleBlink(dt);
 
-    // Finalize all expression changes
     mgr?.update();
   }
 
-  renderer.render(scene, camera);}
+  renderer.render(scene, camera);
+}
 animate();
 
 // ——— Resize ———
