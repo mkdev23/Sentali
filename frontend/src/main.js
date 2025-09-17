@@ -340,7 +340,9 @@ class VisemeScheduler {
 }
 
 const visemeScheduler = new VisemeScheduler();
-
+function shouldUseBlendfaces() {
+  return !!blendfaces;
+}
 // ——— VRM Load ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
