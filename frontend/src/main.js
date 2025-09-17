@@ -214,7 +214,15 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
   vrmReady = !!exprMgr;
 
-  // Cache chest height for any idle/gesture logic
+  // Add to group, face camera
+  vrmGroup.add(vrm.scene);
+  vrm.scene.rotation.y = Math.PI;
+
+  // Aim camera/orbit at head height
+  controls.target.set(0, 1.6, 0);
+  controls.update();
+
+  // Cache chest height for breathing
   const chest = vrm.humanoid.getNormalizedBoneNode('chest')
              || vrm.humanoid.getNormalizedBoneNode('upper_chest');
   if (chest) chestBaseY = chest.position.y;
@@ -225,42 +233,26 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     if (available.includes(alias)) expressionMap[alias] = alias;
   });
 
-  // Init lipsync/blink controller
+  // Init lipsync/blink controller with viseme scaling
   blendfaces = new BlendfacesController(vrm, {
     expressionMap,
-    smooth: 0.3,
+    smooth: 0.4,
     decay: 1.5,
-    rest: { blink: 0.0 }
+    rest: { blink: 0.0 },
+    scale: {        // tone down mouth shapes
+      aa: 0.6,      // was 1.0
+      ee: 0.5,
+      ih: 0.45,
+      oh: 0.55,
+      ou: 0.5
+    }
   });
   blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
 
-  // Parent once, keep child local-clean
-  vrm.scene.rotation.y = Math.PI;
-  vrm.scene.position.set(0, 0, 0);
-  vrmGroup.add(vrm.scene);
+  // Disable first-person culling
+  if (vrm.firstPerson) vrm.firstPerson.autoUpdate = false;
 
-  // Recenter: measure child, move parent, zero child local
-  const box = new THREE.Box3().setFromObject(vrm.scene);
-  const center = box.getCenter(new THREE.Vector3());
-
-  // Move parent so the avatar’s center lands at world origin
-  vrmGroup.position.sub(center);
-
-  // Lift to eye level (adjust as needed)
-  vrmGroup.position.y += 1.0;
-
-  // Disable first-person culling for now
-  if (vrm.firstPerson) {
-    vrm.firstPerson.autoUpdate = false;
-  }
-
-  // Ensure visibility to main camera and align orbit target
-  vrmGroup.traverse(o => o.layers?.enable?.(0));
-  camera.layers.set(0);
-  controls.target.set(0, 1.6, 0);
-  controls.update();
-
-  console.log('[VRM] Ready:', vrm.meta?.name, 'Expressions:', available);
+  console.log('[VRM] Loaded successfully:', vrm.meta?.name);
 });
 
 // ——— Viseme mapping (ID → alias) ———
