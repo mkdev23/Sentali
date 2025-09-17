@@ -934,6 +934,11 @@ function animate() {
     const noActiveExpr = Object.keys(activeExpr).length === 0;
     const sentimentActive = sentimentLayer?.name && performance.now() <= sentimentLayer.until;
 
+    // Reset to happy if sentiment just ended
+    if (!sentimentActive && lastSentimentActive) {
+      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
+      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
+    }
     // Idle bias only if no visemes, no sentiment, and not speaking
     if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
       if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
