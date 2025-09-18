@@ -995,25 +995,25 @@ async function sendToAgent() {
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      addChatEntry('agent', '[Error contacting Agent]');
+      updateChatEntry('agent', '[Error contacting Agent]');
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      addChatEntry('agent', '[No response]');
+      updateChatEntry('agent', '[No response]');
       return;
     }
 
     const agentIndex = addChatEntry('agent', '');
     // Record agent reply in history
-    addToHistory('agent', reply);
+    updateHistory('agent', reply);
 
     await speakAndType(reply, agentIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    addChatEntry('agent', '[Error contacting Agent]');
+    updateChatEntry('agent', '[Error contacting Agent]');
   } finally {
     sendingNow = false;
   }
