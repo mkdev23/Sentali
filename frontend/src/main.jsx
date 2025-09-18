@@ -1042,7 +1042,7 @@ async function sendToAgent() {
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      updateChatEntry('agent', '[Error contacting Agent]');
+      addChatEntry('agent', '[Error contacting Agent]');
       return;
     }
 
@@ -1054,7 +1054,7 @@ async function sendToAgent() {
 
     const agentIndex = addChatEntry('agent', '');
     // Record agent reply in history
-    updateHistory('agent', reply);
+    addToHistory('agent', reply);
 
     await speakAndType(reply, agentIndex);
 
