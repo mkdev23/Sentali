@@ -592,7 +592,20 @@ function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
   }
 }
 
+let conversationHistory = [];
 
+function addToHistory(role, text) {
+  conversationHistory.push({ role, text });
+  if (conversationHistory.length > 20) {
+    conversationHistory = conversationHistory.slice(-20);
+  }
+}
+
+function getRecentContext() {
+  return conversationHistory
+    .map(turn => `${turn.role}: ${turn.text}`)
+    .join('\n');
+}
 
 // ——— WebSocket: server‑pushed TTS/visemes/emotions ———
 const wsClient = new WSClient({
@@ -954,6 +967,9 @@ async function sendToAgent() {
     return;
   }
 
+  // Record user message in history
+  addToHistory('user', msg);
+
   if (msg.startsWith('scan ')) {
     const url = msg.slice(5).trim();
     analyzeWithAnyRun(url);
@@ -962,41 +978,42 @@ async function sendToAgent() {
   }
 
   handleGreetingTrigger(msg);
-
-  // Add the user message first
-  const conversationIndex = addChatEntry('user', msg);
+  addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: msg })
+      body: JSON.stringify({
+        text: msg,
+        context: getRecentContext() // 👈 send last 10 exchanges to backend
+      })
     });
+
     const isJson = chatRes.headers.get('content-type')?.includes('application/json');
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-    
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      // Update the same entry with error message
-      updateChatEntry(conversationIndex, 'agent', `[Error contacting Agent]: ${body?.error || 'Unknown error'}`);
+      addChatEntry('agent', '[Error contacting Agent]');
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      updateChatEntry(conversationIndex, 'agent', '[No response from agent]');
+      addChatEntry('agent', '[No response]');
       return;
     }
 
-    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
+    const agentIndex = addChatEntry('agent', '');
+    // Record agent reply in history
+    addToHistory('agent', reply);
 
-    // Update the SAME entry with the agent's full response (including code)
-    await speakAndType(reply, conversationIndex);
+    await speakAndType(reply, agentIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    updateChatEntry(conversationIndex, 'agent', `[Network Error]: ${err.message}`);
+    addChatEntry('agent', '[Error contacting Agent]');
   } finally {
     sendingNow = false;
   }
