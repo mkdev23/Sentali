@@ -42,7 +42,7 @@ namespace SentaliApp.Services
                 _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
-            _speechConfig.SpeechSynthesisVoiceName = "en-US-JennyNeural";
+            _speechConfig.SpeechSynthesisVoiceName = "en-US-AriaNeural";
             _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
             _speechConfig.SetServiceProperty(
                 "speech.synthesis.requestViseme",
