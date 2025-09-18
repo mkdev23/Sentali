@@ -18,6 +18,7 @@ namespace SentaliApp.Controllers
         {
             _logger = logger;
             _httpClient = httpClientFactory.CreateClient();
+
             _apiKey = config["ANYRUN_API_KEY"] ?? Environment.GetEnvironmentVariable("ANYRUN_API_KEY")
                       ?? throw new Exception("ANYRUN_API_KEY not configured");
 
@@ -39,11 +40,7 @@ namespace SentaliApp.Controllers
             if (string.IsNullOrWhiteSpace(req.Url))
                 return BadRequest(new { error = "Missing URL" });
 
-            var payload = new
-            {
-                task = new { type = "url", url = req.Url }
-            };
-
+            var payload = new { task = new { type = "url", url = req.Url } };
             return await SubmitAnalysis(payload);
         }
 
@@ -56,11 +53,7 @@ namespace SentaliApp.Controllers
             if (string.IsNullOrWhiteSpace(req.Ip))
                 return BadRequest(new { error = "Missing IP" });
 
-            var payload = new
-            {
-                task = new { type = "ip", ip = req.Ip }
-            };
-
+            var payload = new { task = new { type = "ip", ip = req.Ip } };
             return await SubmitAnalysis(payload);
         }
 
@@ -73,11 +66,7 @@ namespace SentaliApp.Controllers
             if (string.IsNullOrWhiteSpace(req.Sha256))
                 return BadRequest(new { error = "Missing SHA256" });
 
-            var payload = new
-            {
-                task = new { type = "hash", hash = req.Sha256 }
-            };
-
+            var payload = new { task = new { type = "hash", hash = req.Sha256 } };
             return await SubmitAnalysis(payload);
         }
 
@@ -136,7 +125,10 @@ namespace SentaliApp.Controllers
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("[ANY.RUN] Error {Status}: {Body}", response.StatusCode, text);
+                // Log full error body for debugging
+                _logger.LogError("[ANY.RUN] Error {Status}: {Body}", response.StatusCode, text);
+
+                // Return JSON error to frontend
                 return StatusCode((int)response.StatusCode, new { error = text });
             }
 
