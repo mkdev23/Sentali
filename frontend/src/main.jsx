@@ -631,28 +631,6 @@ function scheduleVisemes(visemes, audio) {
   if (audio) audio.play().catch(() => {});
 }
 
-function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
-  if (!expression || expression === 'neutral') return;
-
-  const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
-  sentimentLayer = {
-    name: expression,
-    weight,
-    until: performance.now() + holdMs
-  };
-
-  // Apply once for instant feedback
-  const mgr = getMgr();
-  if (mgr) {
-    const key = expressionMap[expression] ?? expression;
-    if (key && key !== 'neutral') {
-      const current = mgr.getValue(key) ?? 0;
-      mgr.setValue(key, Math.min(1.0, current + weight));
-      mgr.update();
-    }
-  }
-}
-
 let conversationHistory = [];
 
 function addToHistory(role, text) {
