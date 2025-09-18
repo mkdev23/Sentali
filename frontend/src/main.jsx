@@ -232,15 +232,76 @@ function handleBreath(t) {
 }
 
 // ——— Sentiment layer (held over entire utterance) ———
+// ——— Sentiment layer (held over entire utterance) ———
 let sentimentLayer = { name: null, weight: 0, until: 0 };
+
 function applySentimentLayer(nowMs) {
   if (!vrmReady || !sentimentLayer.name) return;
-  if (nowMs > sentimentLayer.until) return;
+  
   const mgr = getMgr();
+  if (!mgr) return;
+  
   const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
-  if (key && key !== 'neutral') mgr.setValue(key, sentimentLayer.weight);
+  
+  if (key && key !== 'neutral') {
+    // Apply the sentiment weight
+    mgr.setValue(key, sentimentLayer.weight);
+  }
 }
 
+function clearSentimentLayer() {
+  if (!vrmReady || !sentimentLayer.name) return;
+  
+  const mgr = getMgr();
+  if (!mgr) return;
+  
+  const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
+  
+  if (key && key !== 'neutral') {
+    // Explicitly set sentiment to 0
+    mgr.setValue(key, 0);
+    console.log(`[Sentiment] Cleared ${sentimentLayer.name} expression`);
+  }
+  
+  // Reset the layer
+  sentimentLayer = { name: null, weight: 0, until: 0 };
+}
+
+function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
+  if (!expression || expression === 'neutral') return;
+
+  const holdMs = durationMs ?? (audio?.duration ? audio.duration * 1000 : 2000);
+  const endTime = performance.now() + holdMs;
+  
+  sentimentLayer = {
+    name: expression,
+    weight,
+    until: endTime
+  };
+
+  console.log(`[Sentiment] Setting ${expression} for ${holdMs}ms (until ${endTime})`);
+
+  // Apply immediately for instant feedback
+  const mgr = getMgr();
+  if (mgr) {
+    const key = expressionMap[expression] ?? expression;
+    if (key && key !== 'neutral') {
+      mgr.setValue(key, weight);
+      mgr.update();
+    }
+  }
+  
+  // Schedule cleanup if not already scheduled
+  if (!window.sentimentCleanup) {
+    window.sentimentCleanup = setInterval(() => {
+      const now = performance.now();
+      if (sentimentLayer.until && now > sentimentLayer.until) {
+        console.log('[Sentiment] Time expired - clearing layer');
+        clearSentimentLayer();
+      }
+    }, 100); // Check every 100ms
+  }
+}
 // ——— Viseme scheduling (fast, non‑neutral, synced to audio or timestamps) ———
 const MOUTH_KEYS = ['aa','ee','ih','oh','ou'];
 const visemeIdToAlias = {
@@ -825,7 +886,8 @@ async function speakAndType(text, index) {
     visemeActive = true;
     isSpeaking = true;
 
-    setSentimentHold(expression, audio, 0.6);
+    // Set sentiment hold with explicit duration
+    setSentimentHold(expression, audio, 0.6, durationMs + 500); // Extra 500ms after speech
 
     const typingPromise = typeOut(index, 'agent', text, durationMs);
 
@@ -841,15 +903,22 @@ async function speakAndType(text, index) {
     }
 
     const clearFlags = () => {
+      console.log('[TTS] Clearing speaking flags and sentiment');
       visemeActive = false;
       isSpeaking = false;
+      // Sentiment should auto-clear via the timer, but ensure it's cleared
+      if (performance.now() > sentimentLayer.until) {
+        clearSentimentLayer();
+      }
       getMgr()?.update();
     };
+    
     audio.addEventListener('ended', clearFlags, { once: true });
     setTimeout(clearFlags, safetyMs);
 
     audio.play().catch(err => {
       console.warn('[TTS] Play failed:', err);
+      clearFlags(); // Clear on error too
     });
 
     await typingPromise;
@@ -863,12 +932,12 @@ async function speakAndType(text, index) {
     updateChatEntry(index, 'agent', text);
     isSpeaking = false;
     visemeActive = false;
+    clearSentimentLayer(); // Clear on error
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
   }
 }
-
 // ——— Chat UI helpers ———
 let chatMessages = [];
 let chatRoot = null;
@@ -1077,17 +1146,18 @@ if (document.readyState === 'loading') {
 
 
 
+
+
+// --- Main Animation Loop ---
 let lastSentimentActive = false;
-// Optional: clear sentiment instantly (e.g., in stopSpeaking())
-function clearSentiment() {
-  sentimentLayer = {};
-}
+let idleHappyTimer = 0; // Timer for idle happy state
 
 // --- Main Animation Loop ---
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
   const t = clock.getElapsedTime();
+  const nowMs = performance.now();
 
   controls.update();
 
@@ -1095,33 +1165,54 @@ function animate() {
     currentVRM.update(dt);
 
     const mgr = getMgr();
+    if (!mgr) {
+      renderer.render(scene, camera);
+      return;
+    }
+
     const noActiveExpr = Object.keys(activeExpr).length === 0;
-    const sentimentActive = sentimentLayer?.name && performance.now() <= sentimentLayer.until;
-
-    // Reset to happy if sentiment just ended
+    const sentimentActive = sentimentLayer?.name && nowMs <= sentimentLayer.until;
+    
+    // Clear expired sentiment layers
     if (!sentimentActive && lastSentimentActive) {
-      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
-      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
+      clearSentimentLayer();
     }
+    
     lastSentimentActive = sentimentActive;
-    // Idle bias only if no visemes, no sentiment, and not speaking
-    if (mgr && !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive) {
-      if (mgr.getValue('happy') !== undefined) mgr.setValue('happy', 1.0);
-      if (mgr.getValue('neutral') !== undefined) mgr.setValue('neutral', 0.0);
-    }
-
-    // Apply persistent expressions
-    applyExpressions(dt);
 
     // Apply sentiment overlay if active
-if (sentimentActive) {
-  const key = expressionMap[sentimentLayer.name] ?? sentimentLayer.name;
-  if (key && key !== 'neutral') {
-    const current = mgr.getValue(key) ?? 0;
-    const target = Math.min(1.0, current + (sentimentLayer.weight ?? 0.6));
-    mgr.setValue(key, target);
-  }
-}
+    if (sentimentActive) {
+      applySentimentLayer(nowMs);
+    }
+
+    // Idle happy bias - only when truly idle
+    const isTrulyIdle = !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive;
+    
+    if (isTrulyIdle) {
+      idleHappyTimer += dt;
+      
+      // Gradually increase happy expression over time when idle
+      if (idleHappyTimer > 0.5) { // Start after 0.5s of idle
+        const happyKey = expressionMap['happy'] ?? 'happy';
+        if (mgr.getValue(happyKey) !== undefined) {
+          const currentHappy = mgr.getValue(happyKey) || 0;
+          const targetHappy = 0.3 + Math.sin(t * 0.5) * 0.1; // Gentle breathing happy
+          mgr.setValue(happyKey, THREE.MathUtils.lerp(currentHappy, targetHappy, 0.02));
+        }
+        
+        // Ensure neutral is low
+        const neutralKey = expressionMap['neutral'] ?? 'neutral';
+        if (mgr.getValue(neutralKey) !== undefined) {
+          mgr.setValue(neutralKey, 0.0);
+        }
+      }
+    } else {
+      // Reset idle timer when not idle
+      idleHappyTimer = 0;
+    }
+
+    // Apply persistent expressions (non-sentiment)
+    applyExpressions(dt);
 
     // Always update Blendfaces if present
     if (blendfaces) {
@@ -1139,13 +1230,12 @@ if (sentimentActive) {
     handleBlink(dt);
 
     // Finalize all expression changes
-    mgr?.update();
+    mgr.update();
   }
 
   renderer.render(scene, camera);
 }
 animate();
-
 
 // ——— Resize ———
 window.addEventListener('resize', () => {
