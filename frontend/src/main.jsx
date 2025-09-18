@@ -762,7 +762,7 @@ async function pollAnyRunStatus(taskId) {
   const start = Date.now();
   const poll = setInterval(async () => {
     try {
-      const { res, data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
+      const { data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
 
       const done = status?.status === 'finished' || status?.state === 'done' || status?.done === true;
       const failed = status?.status === 'failed' || status?.error;
@@ -773,7 +773,6 @@ async function pollAnyRunStatus(taskId) {
         if (failed) {
           addChatEntry('sentali', `[ANY.RUN failed] ${status?.error || 'Unknown error'}`);
         } else {
-          // ✅ Fetch the IOC report
           const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
           const summary = buildAnyRunSummary(report);
           addChatEntry('sentali', summary);
@@ -789,7 +788,6 @@ async function pollAnyRunStatus(taskId) {
 // --- URL scan ---
 async function analyzeWithAnyRun(url) {
   addChatEntry('user', `scan url: ${url}`);
-
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/url`, {
       method: 'POST',
@@ -819,7 +817,6 @@ async function analyzeWithAnyRun(url) {
 // --- IP scan ---
 async function analyzeIpWithAnyRun(ip) {
   addChatEntry('user', `scan ip: ${ip}`);
-
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ip`, {
       method: 'POST',
@@ -849,7 +846,6 @@ async function analyzeIpWithAnyRun(ip) {
 // --- SHA256 hash scan ---
 async function analyzeHashWithAnyRun(sha256) {
   addChatEntry('user', `scan hash: ${sha256}`);
-
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/hash`, {
       method: 'POST',
@@ -875,36 +871,6 @@ async function analyzeHashWithAnyRun(sha256) {
     addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
   }
 }
-
-
-
-
-// --- Helper to build a readable summary from IOC JSON ---
-function buildAnyRunSummary(report) {
-  if (!report || typeof report !== 'object') {
-    return '[ANY.RUN] No report data available.';
-  }
-
-  // These keys depend on ANY.RUN's IOC JSON structure
-  const domains = report.domains?.map(d => d.domain || d) || [];
-  const ips = report.ips?.map(ip => ip.ip || ip) || [];
-  const hashes = report.hashes?.map(h => h.sha256 || h) || [];
-  const verdict = report.verdict || report.analysisVerdict || 'Unknown verdict';
-
-  let summary = `🛡 ANY.RUN Analysis Summary\n`;
-  summary += `Verdict: ${verdict}\n`;
-
-  if (domains.length) summary += `Domains: ${domains.slice(0, 5).join(', ')}\n`;
-  if (ips.length) summary += `IPs: ${ips.slice(0, 5).join(', ')}\n`;
-  if (hashes.length) summary += `SHA256: ${hashes.slice(0, 3).join(', ')}\n`;
-
-  if (domains.length > 5 || ips.length > 5 || hashes.length > 3) {
-    summary += `... (truncated, see full report in ANY.RUN)`;
-  }
-
-  return summary.trim();
-}
-
 
 // Reusable typewriter helper
 // Reusable typewriter helper — index-based
