@@ -719,45 +719,192 @@ function sanitizeForTTS(s) {
   }
   return out.trim();
 }
-async function analyzeWithAnyRun(url) {
-  addChatEntry('user', `scan: ${url}`);
+// --- Shared helper to safely fetch JSON or fallback ---
+async function safeJsonFetch(url, options) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data;
   try {
-    const res = await fetch(`${backendBase}/api/anyrun/url`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
-      return;
-    }
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: 'Invalid JSON from backend', raw: text };
+  }
+  return { res, data };
+}
 
-    const taskId = data.taskId || data.id || data.uuid;
-    addChatEntry('sentali', `Started analysis. Task: ${taskId}`);
+// --- Shared helper to build a readable summary from IOC JSON ---
+function buildAnyRunSummary(report) {
+  if (!report || typeof report !== 'object') {
+    return '[ANY.RUN] No report data available.';
+  }
 
-    // Poll every 5s until done or 3 min timeout
-    const start = Date.now();
-    const poll = setInterval(async () => {
-      const s = await fetch(`${backendBase}/api/anyrun/status/${taskId}`);
-      const status = await s.json();
+  const domains = report.domains?.map(d => d.domain || d) || [];
+  const ips = report.ips?.map(ip => ip.ip || ip) || [];
+  const hashes = report.hashes?.map(h => h.sha256 || h) || [];
+  const verdict = report.verdict || report.analysisVerdict || 'Unknown verdict';
+
+  let summary = `🛡 ANY.RUN Analysis Summary\n`;
+  summary += `Verdict: ${verdict}\n`;
+
+  if (domains.length) summary += `Domains: ${domains.slice(0, 5).join(', ')}\n`;
+  if (ips.length) summary += `IPs: ${ips.slice(0, 5).join(', ')}\n`;
+  if (hashes.length) summary += `SHA256: ${hashes.slice(0, 3).join(', ')}\n`;
+
+  if (domains.length > 5 || ips.length > 5 || hashes.length > 3) {
+    summary += `... (truncated, see full report in ANY.RUN)`;
+  }
+
+  return summary.trim();
+}
+
+// --- Shared polling helper ---
+async function pollAnyRunStatus(taskId) {
+  const start = Date.now();
+  const poll = setInterval(async () => {
+    try {
+      const { res, data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
+
       const done = status?.status === 'finished' || status?.state === 'done' || status?.done === true;
       const failed = status?.status === 'failed' || status?.error;
 
       if (done || failed || Date.now() - start > 180000) {
         clearInterval(poll);
+
         if (failed) {
           addChatEntry('sentali', `[ANY.RUN failed] ${status?.error || 'Unknown error'}`);
         } else {
-          addChatEntry('sentali', 'Analysis completed. (See console for details)');
-          console.log('[ANY.RUN report]', status);
+          // ✅ Fetch the IOC report
+          const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
+          const summary = buildAnyRunSummary(report);
+          addChatEntry('sentali', summary);
         }
       }
-    }, 5000);
+    } catch (err) {
+      clearInterval(poll);
+      addChatEntry('sentali', `[ANY.RUN polling error] ${err.message}`);
+    }
+  }, 5000);
+}
+
+// --- URL scan ---
+async function analyzeWithAnyRun(url) {
+  addChatEntry('user', `scan url: ${url}`);
+
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+
+    if (!res.ok) {
+      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      return;
+    }
+
+    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
+    if (!taskId) {
+      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+      return;
+    }
+
+    addChatEntry('sentali', `Started URL analysis. Task: ${taskId}`);
+    pollAnyRunStatus(taskId);
+
   } catch (err) {
     addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
   }
 }
+
+// --- IP scan ---
+async function analyzeIpWithAnyRun(ip) {
+  addChatEntry('user', `scan ip: ${ip}`);
+
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip })
+    });
+
+    if (!res.ok) {
+      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      return;
+    }
+
+    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
+    if (!taskId) {
+      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+      return;
+    }
+
+    addChatEntry('sentali', `Started IP analysis. Task: ${taskId}`);
+    pollAnyRunStatus(taskId);
+
+  } catch (err) {
+    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+  }
+}
+
+// --- SHA256 hash scan ---
+async function analyzeHashWithAnyRun(sha256) {
+  addChatEntry('user', `scan hash: ${sha256}`);
+
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/hash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha256 })
+    });
+
+    if (!res.ok) {
+      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      return;
+    }
+
+    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
+    if (!taskId) {
+      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+      return;
+    }
+
+    addChatEntry('sentali', `Started hash analysis. Task: ${taskId}`);
+    pollAnyRunStatus(taskId);
+
+  } catch (err) {
+    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+  }
+}
+
+
+
+
+// --- Helper to build a readable summary from IOC JSON ---
+function buildAnyRunSummary(report) {
+  if (!report || typeof report !== 'object') {
+    return '[ANY.RUN] No report data available.';
+  }
+
+  // These keys depend on ANY.RUN's IOC JSON structure
+  const domains = report.domains?.map(d => d.domain || d) || [];
+  const ips = report.ips?.map(ip => ip.ip || ip) || [];
+  const hashes = report.hashes?.map(h => h.sha256 || h) || [];
+  const verdict = report.verdict || report.analysisVerdict || 'Unknown verdict';
+
+  let summary = `🛡 ANY.RUN Analysis Summary\n`;
+  summary += `Verdict: ${verdict}\n`;
+
+  if (domains.length) summary += `Domains: ${domains.slice(0, 5).join(', ')}\n`;
+  if (ips.length) summary += `IPs: ${ips.slice(0, 5).join(', ')}\n`;
+  if (hashes.length) summary += `SHA256: ${hashes.slice(0, 3).join(', ')}\n`;
+
+  if (domains.length > 5 || ips.length > 5 || hashes.length > 3) {
+    summary += `... (truncated, see full report in ANY.RUN)`;
+  }
+
+  return summary.trim();
+}
+
 
 // Reusable typewriter helper
 // Reusable typewriter helper — index-based
