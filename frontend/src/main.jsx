@@ -1108,6 +1108,7 @@ function initUI() {
   
   const sendBtn = document.getElementById('agentSendBtn');
   const inputEl = document.getElementById('agentInput');
+  const voiceSelect = document.getElementById('voiceSelect'); // <-- grab the dropdown
 
   if (sendBtn) {
     sendBtn.addEventListener('click', sendToAgent);
@@ -1122,7 +1123,27 @@ function initUI() {
     });
   }
 
+  // 🎤 Mic button setup
   initMicButton();
+
+  // 🎙 Voice selector setup
+  if (voiceSelect) {
+    voiceSelect.addEventListener('change', (e) => {
+      const selectedVoice = e.target.value;
+
+      fetch('/api/set-voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: selectedVoice })
+      })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to set voice");
+        console.log(`[UI] Sentali voice changed to: ${selectedVoice}`);
+      })
+      .catch(err => console.error(err));
+    });
+  }
+
   console.log('[UI] UI initialization complete');
 }
 
@@ -1131,7 +1152,6 @@ if (document.readyState === 'loading') {
 } else {
   initUI();
 }
-
 
 
 

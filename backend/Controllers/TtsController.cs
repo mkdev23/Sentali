@@ -1,4 +1,3 @@
-// TtsController.cs
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using SentaliApp.Services;
@@ -14,7 +13,11 @@ namespace SentaliApp.Controllers
         private readonly TtsService _tts;
         private readonly BlobStorageService _blob;
 
-        public TtsController(ILogger<TtsController> logger, SentimentService sentiment, TtsService tts, BlobStorageService blob)
+        public TtsController(
+            ILogger<TtsController> logger,
+            SentimentService sentiment,
+            TtsService tts,
+            BlobStorageService blob)
         {
             _logger = logger;
             _sentiment = sentiment;
@@ -24,6 +27,23 @@ namespace SentaliApp.Controllers
 
         public class ChatRequest { public string? Text { get; set; } }
 
+        // ✅ NEW: Voice change request DTO
+        public class VoiceChangeRequest { public string? Voice { get; set; } }
+
+        // ✅ NEW: Endpoint to change the TTS voice
+        [HttpPost("set-voice")]
+        public IActionResult SetVoice([FromBody] VoiceChangeRequest req)
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.Voice))
+                return BadRequest(new { error = "Missing 'voice' property" });
+
+            _tts.SetVoice(req.Voice);
+            _logger.LogInformation("[TTS] Voice changed to {Voice}", req.Voice);
+
+            return Ok(new { message = $"Voice changed to {req.Voice}" });
+        }
+
+        // Existing synthesis endpoint — unchanged
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] ChatRequest req)
         {
@@ -34,18 +54,18 @@ namespace SentaliApp.Controllers
 
             try
             {
-                // Sentiment → expression (expanded for more variety; maps to vrmMapping.ts)
+                // Sentiment → expression
                 var sentiment = await _sentiment.GetSentiment(req.Text);
                 var expression = sentiment switch
                 {
-                    "Positive" => "joy",       // Maps to 'happy'
-                    "Negative" => "angry",     // Maps to 'angry'
-                    "Mixed" => "surprised",    // Maps to 'surprised' for uncertainty
-                    _ => "neutral"             // Maps to 'neutral'
+                    "Positive" => "joy",
+                    "Negative" => "angry",
+                    "Mixed" => "surprised",
+                    _ => "neutral"
                 };
                 _logger.LogInformation("[TTS] Sentiment={Sentiment}, Expression={Expression}", sentiment, expression);
 
-                // Synthesis with longer timeout (60s for longer texts)
+                // Synthesis with longer timeout
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                 _logger.LogInformation("[TTS] Synthesis start");
                 var (audioBytes, visemes) = await _tts.SynthesizeWithVisemesAsync(req.Text, cts.Token);
@@ -66,7 +86,7 @@ namespace SentaliApp.Controllers
                 var visemePayload = visemes.Select(v => new
                 {
                     VisemeId = v.VisemeId,
-                    TimeMs = (ulong)v.AudioOffset / 10000UL // 100ns → ms, use ulong literal for divisor
+                    TimeMs = (ulong)v.AudioOffset / 10000UL
                 }).ToList();
 
                 return Ok(new

@@ -14,6 +14,22 @@ namespace SentaliApp.Services
     {
         private readonly SpeechConfig _speechConfig;
 
+        // Track the current voice (default to female UK)
+        private string _currentVoice = "en-GB-SoniaNeural";
+
+        public void SetVoice(string voiceName)
+        {
+            _currentVoice = voiceName;
+            _speechConfig.SpeechSynthesisVoiceName = _currentVoice;
+            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+            _speechConfig.SetServiceProperty(
+                "speech.synthesis.requestViseme",
+                "true",
+                ServicePropertyChannel.UriQueryParameter
+            );
+            Console.WriteLine($"[TTS] Voice changed to {_currentVoice}");
+        }
+
         // No-arg constructor for compatibility
         public TtsService()
         {
@@ -42,16 +58,11 @@ namespace SentaliApp.Services
                 _speechConfig = SpeechConfig.FromAuthorizationToken(token.Token, endpointUri.Host);
             }
 
-            _speechConfig.SpeechSynthesisVoiceName = "en-US-AriaNeural";
-            _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
-            _speechConfig.SetServiceProperty(
-                "speech.synthesis.requestViseme",
-                "true",
-                ServicePropertyChannel.UriQueryParameter
-            );
+            // Initialize with default voice
+            SetVoice(_currentVoice);
         }
 
-        // Old method name preserved
+        // Old method name preserved for compatibility
         public Task<(byte[] Audio, List<(uint VisemeId, long AudioOffset)> Visemes)>
             SynthesizeWithVisemeAndLipsync(string text, CancellationToken cancellationToken = default)
             => SynthesizeWithVisemesAsync(text, cancellationToken);
@@ -68,7 +79,6 @@ namespace SentaliApp.Services
         {
             var visemes = new List<(uint VisemeId, long AudioOffset)>();
 
-            // This was the working setup: audioConfig: null
             using var synthesizer = new SpeechSynthesizer(_speechConfig, audioConfig: null);
 
             synthesizer.VisemeReceived += (_, e) =>
