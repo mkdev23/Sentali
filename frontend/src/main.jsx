@@ -960,40 +960,6 @@ async function sendToAgent() {
   }
 
 
-  // Trigger greeting gestures/sentiment if applicable
-  handleGreetingTrigger(msg);
-
-  addChatEntry('user', msg);
-  inputEl.value = '';
-
-  try {
-    const chatRes = await fetch(`${backendBase}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: msg })
-    });
-    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
-    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-    if (!chatRes.ok) {
-      console.error('[Chat Error]', chatRes.status, body);
-      addChatEntry('agent', '[Error contacting Agent]');
-      return;
-    }
-
-    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
-    if (!reply) {
-      addChatEntry('agent', '[No response]');
-      return;
-    }
-
-    const agentDiv = addChatEntry('agent', '');
-    await speakAndType(reply, agentDiv);
-  } catch (err) {
-    console.error('[Agent Error]', err);
-    addChatEntry('agent', '[Error contacting Agent]');
-  } finally {
-    sendingNow = false;
-  }
 }
 
 // ——— Mic button ———
