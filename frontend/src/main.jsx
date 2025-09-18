@@ -936,7 +936,6 @@ function handleGreetingTrigger(message) {
 }
 
 let sendingNow = false;
-
 async function sendToAgent() {
   if (sendingNow) return;
   sendingNow = true;
@@ -964,7 +963,8 @@ async function sendToAgent() {
 
   handleGreetingTrigger(msg);
 
-  const userIndex = addChatEntry('user', msg);
+  // Add the user message first
+  const conversationIndex = addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
@@ -975,28 +975,31 @@ async function sendToAgent() {
     });
     const isJson = chatRes.headers.get('content-type')?.includes('application/json');
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
+    
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      updateChatEntry(userIndex, 'agent', '[Error contacting Agent]');
+      // Update the same entry with error message
+      updateChatEntry(conversationIndex, 'agent', `[Error contacting Agent]: ${body?.error || 'Unknown error'}`);
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      updateChatEntry(userIndex, 'agent', '[No response]');
+      updateChatEntry(conversationIndex, 'agent', '[No response from agent]');
       return;
     }
 
-    const agentIndex = addChatEntry('agent', '');
-    await speakAndType(reply, agentIndex);
+    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
+
+    // Update the SAME entry with the agent's full response (including code)
+    await speakAndType(reply, conversationIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    updateChatEntry(userIndex, 'agent', '[Error contacting Agent]');
+    updateChatEntry(conversationIndex, 'agent', `[Network Error]: ${err.message}`);
   } finally {
     sendingNow = false;
   }
-
 }
 
 

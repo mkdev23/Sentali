@@ -34,7 +34,7 @@ export default function ChatBlock({ messages = [], onRunCode }) {
           {expanded ? '▼ Hide Chat History' : '▶ Show Chat History'}
           {messages.length > 0 && (
             <span style={{ marginLeft: '8px', fontSize: '12px', color: '#aaa' }}>
-              ({messages.length} messages)
+              ({Math.ceil(messages.length / 2)} conversations)
             </span>
           )}
         </span>
@@ -50,7 +50,7 @@ export default function ChatBlock({ messages = [], onRunCode }) {
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          gap: '12px'
+          gap: '16px'
         }}>
           {messages.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#888', fontStyle: 'italic' }}>
@@ -61,7 +61,9 @@ export default function ChatBlock({ messages = [], onRunCode }) {
               <ChatMessage 
                 key={idx} 
                 message={message} 
-                onRunCode={onRunCode} 
+                onRunCode={onRunCode}
+                index={idx}
+                messages={messages}
               />
             ))
           )}
