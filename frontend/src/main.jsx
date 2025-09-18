@@ -1103,12 +1103,11 @@ function initMicButton() {
 
 // ——— UI wiring ———
 function initUI() {
-  // Initialize chat log first
   initChatLog();
-  
+
   const sendBtn = document.getElementById('agentSendBtn');
   const inputEl = document.getElementById('agentInput');
-  const voiceSelect = document.getElementById('voiceSelect'); // <-- grab the dropdown
+  const voiceSelect = document.getElementById('voiceSelect');
 
   if (sendBtn) {
     sendBtn.addEventListener('click', sendToAgent);
@@ -1123,13 +1122,30 @@ function initUI() {
     });
   }
 
-  // 🎤 Mic button setup
   initMicButton();
 
-  // 🎙 Voice selector setup
+  // 🎙 Voice selector with persistence
   if (voiceSelect) {
+    // Load saved voice from localStorage
+    const savedVoice = localStorage.getItem('sentaliVoice');
+    if (savedVoice) {
+      voiceSelect.value = savedVoice;
+      // Send to backend immediately so TTS starts with correct voice
+      fetch('/api/tts/set-voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: savedVoice })
+      })
+      .then(() => {
+        console.log(`[UI] Restored Sentali voice: ${savedVoice}`);
+      })
+      .catch(err => console.error(err));
+    }
+
+    // Listen for changes and save to localStorage
     voiceSelect.addEventListener('change', (e) => {
       const selectedVoice = e.target.value;
+      localStorage.setItem('sentaliVoice', selectedVoice);
 
       fetch('/api/tts/set-voice', {
         method: 'POST',
