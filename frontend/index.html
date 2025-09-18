@@ -47,27 +47,19 @@
     label { color: white; font-size: 14px; }
 
     /* Chat log above chat bar */
-      #chat-log {
-      position: fixed;
-      bottom: calc(var(--chat-bar-height, 72px)); /* adjust to match actual bar height */
-      left: 0;
-      width: 100%;
-      top: auto;
-      max-height: calc(100% - var(--chat-bar-height, 72px) - 12px);
-      overflow-y: auto;
-      background: rgba(0,0,0,0.5);
-      padding: 6px;
-      font-size: 13px;
-      color: #ddd;
-      z-index: 9;
-      }
-    .chat-entry { margin-bottom: 4px; }
-    .chat-user { color: #90caf9; }
-    .chat-agent { color: #a5d6a7; }
+#chat-log {
+  position: fixed;
+  bottom: calc(var(--chat-bar-height, 72px) + 8px); /* Above chat bar */
+  left: 8px;
+  right: 8px;
+  max-width: 600px;
+  z-index: 10;
+  background: transparent;
+  padding: 0;
+}
 
-    /* Bottom chat bar */
 #chat-bar {
-  --chat-bar-height: 72px; /* keep this in sync with actual height */
+  --chat-bar-height: 72px;
   position: fixed;
   bottom: 0;
   left: 0;
@@ -78,6 +70,7 @@
   gap: 6px;
   align-items: center;
   z-index: 10;
+  border-top: 1px solid #444;
 }
 
     #agentInput {

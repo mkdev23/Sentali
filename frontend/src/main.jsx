@@ -708,43 +708,54 @@ async function analyzeWithAnyRun(url) {
 }
 
 // Reusable typewriter helper
-async function typeOut(agentDiv, role, text, totalDurationMs) {
-  // Detect if this is a code block (triple backticks or "looks like code")
+// Reusable typewriter helper — index-based
+async function typeOut(index, role, text, totalDurationMs) {
+  if (index < 0 || !chatMessages[index]) {
+    console.warn('[UI] Invalid index for typeOut:', index);
+    return;
+  }
+
   const codeMatch = text.match(/```(\w+)?\n([\s\S]*?)\n```/);
   const isLikelyCode = /import|function|const|let|class|=>/.test(text);
 
-  if (codeMatch || isLikelyCode) {
-    // Extract just the code content if wrapped in backticks
-    const codeContent = codeMatch ? codeMatch[2] : text;
-    const lines = codeContent.split('\n');
-    const delay = totalDurationMs / Math.max(lines.length, 1);
-
-    let current = '';
-    for (let i = 0; i < lines.length; i++) {
-      current += (i > 0 ? '\n' : '') + lines[i];
-      updateChatEntry(agentDiv, role, current);
-      await new Promise(r => setTimeout(r, delay));
+  try {
+    if (codeMatch || isLikelyCode) {
+      const codeContent = codeMatch ? codeMatch[2] : text;
+      const lines = codeContent.split('\n').filter(line => line.trim());
+      const delay = totalDurationMs / Math.max(lines.length, 1);
+      let current = '';
+      
+      for (let i = 0; i < lines.length; i++) {
+        current += (i > 0 ? '\n' : '') + lines[i];
+        updateChatEntry(index, role, current);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    } else {
+      const chars = [...text];
+      const delay = totalDurationMs / Math.max(chars.length, 1);
+      let current = '';
+      
+      for (let i = 0; i < chars.length; i++) {
+        current += chars[i];
+        updateChatEntry(index, role, current);
+        if (i % 10 === 0) { // Batch updates for performance
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
     }
-  } else {
-    // Normal text: type character-by-character
-    const chars = [...text];
-    const delay = totalDurationMs / Math.max(chars.length, 1);
-
-    let current = '';
-    for (let i = 0; i < chars.length; i++) {
-      current += chars[i];
-      updateChatEntry(agentDiv, role, current);
-      await new Promise(r => setTimeout(r, delay));
-    }
+    
+    console.log('[UI] Typeout animation completed');
+  } catch (error) {
+    console.error('[UI] Typeout error:', error);
+    updateChatEntry(index, role, text); // Fallback to full text
   }
 }
 
-
-async function speakAndType(text, agentDiv) {
+async function speakAndType(text, index) {
   if (ttsInflight) {
     console.warn('[TTS] In-flight; aborting previous');
     ttsAbortController?.abort();
-    updateChatEntry(agentDiv, 'agent', text);
+    updateChatEntry(index, 'agent', text);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
@@ -763,14 +774,14 @@ async function speakAndType(text, agentDiv) {
     ]);
     if (!res.ok) {
       console.error('[TTS] HTTP', res.status);
-      updateChatEntry(agentDiv, 'agent', text);
+      updateChatEntry(index, 'agent', text);
       return;
     }
 
     const body = await res.json().catch(() => null);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl', body);
-      updateChatEntry(agentDiv, 'agent', text);
+      updateChatEntry(index, 'agent', text);
       return;
     }
 
@@ -780,7 +791,6 @@ async function speakAndType(text, agentDiv) {
     const audio = new Audio(body.audioUrl);
     audio.crossOrigin = 'anonymous';
 
-    // Try to get duration; don't block if slow
     await new Promise((resolve) => {
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -804,8 +814,7 @@ async function speakAndType(text, agentDiv) {
 
     setSentimentHold(expression, audio, 0.6);
 
-    // Start typing and audio/visemes together
-    const typingPromise = typeOut(agentDiv, 'agent', text, durationMs);
+    const typingPromise = typeOut(index, 'agent', text, durationMs);
 
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
@@ -830,7 +839,6 @@ async function speakAndType(text, agentDiv) {
       console.warn('[TTS] Play failed:', err);
     });
 
-    // Wait for typing to finish before exiting
     await typingPromise;
 
   } catch (err) {
@@ -839,7 +847,7 @@ async function speakAndType(text, agentDiv) {
     } else {
       console.warn('[TTS] Timeout after 60s');
     }
-    updateChatEntry(agentDiv, 'agent', text);
+    updateChatEntry(index, 'agent', text);
     isSpeaking = false;
     visemeActive = false;
   } finally {
@@ -848,41 +856,71 @@ async function speakAndType(text, agentDiv) {
   }
 }
 
-
 // ——— Chat UI helpers ———
-function addChatEntry(role, text) {
+let chatMessages = [];
+let chatRoot = null;
+
+function initChatLog() {
   const log = document.getElementById('chat-log');
   if (!log) {
     console.warn('[UI] #chat-log not found');
-    return null;
+    return;
   }
-
-  const div = document.createElement('div');
-  div.className = 'chat-entry';
-
-  // Render using ChatBlock + ChatMessage
-  const root = ReactDOM.createRoot(div);
-  root.render(
-    <ChatBlock>
-      <ChatMessage message={{ role, text }} />
-    </ChatBlock>
-  );
-
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
+  
+  // Clear any existing content
+  log.innerHTML = '';
+  
+  chatRoot = ReactDOM.createRoot(log);
+  renderChat();
+  console.log('[UI] Chat log initialized');
 }
 
-function updateChatEntry(div, role, text) {
-  if (!div) return;
-
-  // Re-render using ChatBlock + ChatMessage
-  const root = ReactDOM.createRoot(div);
-  root.render(
-    <ChatBlock>
-      <ChatMessage message={{ role, text }} />
-    </ChatBlock>
+function renderChat() {
+  if (!chatRoot) return;
+  
+  chatRoot.render(
+    <ChatBlock 
+      messages={chatMessages} 
+      onRunCode={onRunCode} 
+    />
   );
+  
+  // Auto-scroll to bottom when expanded
+  const log = document.getElementById('chat-log');
+  if (log && chatMessages.length > 0) {
+    const messagesDiv = log.querySelector('[style*="overflow-y"]');
+    if (messagesDiv) {
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+  }
+}
+
+function addChatEntry(role, text) {
+  if (!text || typeof text !== 'string') {
+    console.warn('[UI] Invalid chat entry:', { role, text });
+    return null;
+  }
+  
+  chatMessages.push({ role, text, timestamp: Date.now() });
+  renderChat();
+  console.log('[UI] Added chat entry:', role, text.substring(0, 50) + '...');
+  return chatMessages.length - 1;
+}
+
+function updateChatEntry(index, role, text) {
+  if (index >= 0 && index < chatMessages.length && typeof text === 'string') {
+    chatMessages[index] = { ...chatMessages[index], role, text };
+    renderChat();
+    console.log('[UI] Updated chat entry:', index);
+  } else {
+    console.warn('[UI] Invalid update:', { index, role, text: typeof text });
+  }
+}
+
+// Placeholder for code execution
+function onRunCode(code) {
+  console.log('[UI] Code execution requested:', code?.substring(0, 50));
+  addChatEntry('system', '[Code execution not yet implemented]');
 }
 
 // --- Greeting trigger helper ---
@@ -898,6 +936,7 @@ function handleGreetingTrigger(message) {
 }
 
 let sendingNow = false;
+
 async function sendToAgent() {
   if (sendingNow) return;
   sendingNow = true;
@@ -916,7 +955,6 @@ async function sendToAgent() {
     return;
   }
 
-  // ✅ Now safe to check for scan command
   if (msg.startsWith('scan ')) {
     const url = msg.slice(5).trim();
     analyzeWithAnyRun(url);
@@ -924,10 +962,9 @@ async function sendToAgent() {
     return;
   }
 
-  // Trigger greeting gestures/sentiment if applicable
   handleGreetingTrigger(msg);
 
-  addChatEntry('user', msg);
+  const userIndex = addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
@@ -940,27 +977,28 @@ async function sendToAgent() {
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      addChatEntry('agent', '[Error contacting Agent]');
+      updateChatEntry(userIndex, 'agent', '[Error contacting Agent]');
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      addChatEntry('agent', '[No response]');
+      updateChatEntry(userIndex, 'agent', '[No response]');
       return;
     }
 
-    const agentDiv = addChatEntry('agent', '');
-    await speakAndType(reply, agentDiv);
+    const agentIndex = addChatEntry('agent', '');
+    await speakAndType(reply, agentIndex);
+
   } catch (err) {
     console.error('[Agent Error]', err);
-    addChatEntry('agent', '[Error contacting Agent]');
+    updateChatEntry(userIndex, 'agent', '[Error contacting Agent]');
   } finally {
     sendingNow = false;
   }
 
-
 }
+
 
 // ——— Mic button ———
 function initMicButton() {
@@ -988,6 +1026,9 @@ function initMicButton() {
 
 // ——— UI wiring ———
 function initUI() {
+  // Initialize chat log first
+  initChatLog();
+  
   const sendBtn = document.getElementById('agentSendBtn');
   const inputEl = document.getElementById('agentInput');
 
@@ -998,14 +1039,14 @@ function initUI() {
   if (inputEl) {
     inputEl.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault(); // prevent newline
+        e.preventDefault();
         sendToAgent();
       }
-      // Shift+Enter will naturally insert a newline
     });
   }
 
   initMicButton();
+  console.log('[UI] UI initialization complete');
 }
 
 if (document.readyState === 'loading') {
