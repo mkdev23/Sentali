@@ -1025,7 +1025,9 @@ async function sendToAgent() {
   }
 
   handleGreetingTrigger(msg);
-  addChatEntry('user', msg);
+  
+  // Add user message to chat - this returns the index
+  const userIndex = addChatEntry('user', msg);
   inputEl.value = '';
 
   try {
@@ -1040,32 +1042,40 @@ async function sendToAgent() {
 
     const isJson = chatRes.headers.get('content-type')?.includes('application/json');
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
+    
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      addChatEntry('agent', '[Error contacting Agent]');
+      // Update the user entry with error message
+      updateChatEntry(userIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
+      addToHistory('agent', `[Error]: Failed to contact agent`);
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      updateChatEntry('agent', '[No response]');
+      // Update the user entry with no response message
+      updateChatEntry(userIndex, 'agent', '[No response from agent]');
+      addToHistory('agent', '[No response from agent]');
       return;
     }
 
-    const agentIndex = addChatEntry('agent', '');
+    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
+
     // Record agent reply in history
     addToHistory('agent', reply);
 
-    await speakAndType(reply, agentIndex);
+    // Update the user entry with the agent's full response (including code)
+    await speakAndType(reply, userIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    updateChatEntry('agent', '[Error contacting Agent]');
+    // Update the user entry with network error
+    updateChatEntry(userIndex, 'agent', `[Network Error]: ${err.message}`);
+    addToHistory('agent', `[Network Error]: ${err.message}`);
   } finally {
     sendingNow = false;
   }
 }
-
 
 // ——— Mic button ———
 function initMicButton() {
