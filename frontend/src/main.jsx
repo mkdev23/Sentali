@@ -1131,7 +1131,7 @@ function initUI() {
     voiceSelect.addEventListener('change', (e) => {
       const selectedVoice = e.target.value;
 
-      fetch('/api/set-voice', {
+      fetch('/api/tts/set-voice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ voice: selectedVoice })
