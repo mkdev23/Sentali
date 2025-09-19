@@ -732,6 +732,19 @@ async function safeJsonFetch(url, options) {
   return { res, data };
 }
 
+// --- Shared helper to safely fetch JSON or fallback ---
+async function safeJsonFetch(url, options) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: 'Invalid JSON from backend', raw: text };
+  }
+  return { res, data };
+}
+
 // --- Shared helper to build a readable summary from IOC JSON ---
 function buildAnyRunSummary(report) {
   if (!report || typeof report !== 'object') {
@@ -785,7 +798,7 @@ async function pollAnyRunStatus(taskId) {
   }, 5000);
 }
 
-// --- URL scan ---
+// --- URL scan (sandbox analysis) ---
 async function analyzeWithAnyRun(url) {
   addChatEntry('user', `scan url: ${url}`);
   try {
@@ -814,61 +827,83 @@ async function analyzeWithAnyRun(url) {
   }
 }
 
-// --- IP scan ---
+// --- IP scan (TI feed query) ---
 async function analyzeIpWithAnyRun(ip) {
   addChatEntry('user', `scan ip: ${ip}`);
   try {
-    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ip`, {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/ip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip })
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      addChatEntry('sentali', `[ANY.RUN TI error] ${data?.error || res.status}`);
       return;
     }
 
-    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
-    if (!taskId) {
-      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+    // Assuming backend returns matching IOCs from cached feed
+    const matches = data.matches || [];
+    if (matches.length === 0) {
+      addChatEntry('sentali', `✅ No threats found for IP: ${ip} in ANY.RUN TI feeds (last updated: ${data.lastUpdated || 'N/A'})`);
       return;
     }
 
-    addChatEntry('sentali', `Started IP analysis. Task: ${taskId}`);
-    pollAnyRunStatus(taskId);
+    let summary = `🛡 ANY.RUN TI Lookup for IP: ${ip}\n`;
+    summary += `Last feed update: ${data.lastUpdated || 'N/A'}\n\n`;
+    summary += `**Matches Found:** ${matches.length}\n`;
+
+    matches.forEach((match, index) => {
+      summary += `\n**Match ${index + 1}:**\n`;
+      summary += `Type: ${match.type || 'IP'}\n`;
+      summary += `Reputation: ${match.reputation || 'Unknown'}\n`;
+      summary += `Details: ${match.details || 'N/A'}\n`;
+    });
+
+    addChatEntry('sentali', summary);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+    addChatEntry('sentali', `[ANY.RUN TI request error] ${err.message}`);
   }
 }
 
-// --- SHA256 hash scan ---
+// --- SHA256 hash scan (TI feed query) ---
 async function analyzeHashWithAnyRun(sha256) {
   addChatEntry('user', `scan hash: ${sha256}`);
   try {
-    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/hash`, {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/hash`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sha256 })
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      addChatEntry('sentali', `[ANY.RUN TI error] ${data?.error || res.status}`);
       return;
     }
 
-    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
-    if (!taskId) {
-      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+    // Assuming backend returns matching IOCs from cached feed
+    const matches = data.matches || [];
+    if (matches.length === 0) {
+      addChatEntry('sentali', `✅ No threats found for SHA256: ${sha256} in ANY.RUN TI feeds (last updated: ${data.lastUpdated || 'N/A'})`);
       return;
     }
 
-    addChatEntry('sentali', `Started hash analysis. Task: ${taskId}`);
-    pollAnyRunStatus(taskId);
+    let summary = `🛡 ANY.RUN TI Lookup for SHA256: ${sha256}\n`;
+    summary += `Last feed update: ${data.lastUpdated || 'N/A'}\n\n`;
+    summary += `**Matches Found:** ${matches.length}\n`;
+
+    matches.forEach((match, index) => {
+      summary += `\n**Match ${index + 1}:**\n`;
+      summary += `Type: ${match.type || 'Hash'}\n`;
+      summary += `Reputation: ${match.reputation || 'Unknown'}\n`;
+      summary += `Details: ${match.details || 'N/A'}\n`;
+    });
+
+    addChatEntry('sentali', summary);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+    addChatEntry('sentali', `[ANY.RUN TI request error] ${err.message}`);
   }
 }
 
