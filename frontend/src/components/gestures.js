@@ -39,38 +39,50 @@ export class GestureController {
     const { humanoid } = this.vrm;
 
     switch (this.active) {
-case 'wave': {
-  const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
-  const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
-  const hand  = humanoid.getNormalizedBoneNode('rightHand');
+      case 'wave': {
+        const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
+        const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
+        const hand = humanoid.getNormalizedBoneNode('rightHand');
 
-  if (upper && lower && hand) {
-    // Keep arm lifted parallel to floor
-    upper.rotation.z = THREE.MathUtils.degToRad(70); // ~shoulder height
-    upper.rotation.x = THREE.MathUtils.degToRad(-20);  // no forward/back tilt
+        if (upper && lower && hand) {
+          const tNorm = elapsed / this.duration;
 
-    // Bend elbow so hand is near head
-     lower.rotation.z = THREE.MathUtils.degToRad(-150);  // moderate bend
-
-    // Add gentle wrist wave motion
-    const waveAngle = Math.sin(t * Math.PI * 2) * THREE.MathUtils.degToRad(20); // slower, 1 cycle/sec
-    hand.rotation.z = waveAngle;
-
-    // Palm facing outward
-    hand.rotation.x = THREE.MathUtils.degToRad(270);
-    hand.rotation.y = THREE.MathUtils.degToRad(0);
-
-        // --- Phase 3: Return to rest (0.75–1) ---
-    if (tNorm >= 0.75) {
-      const returnT = (tNorm - 0.75) / 0.25;
-      upper.rotation.z = THREE.MathUtils.degToRad(70 * (1 - returnT));
-      upper.rotation.x = THREE.MathUtils.degToRad(-20 * (1 - returnT));
-      lower.rotation.z = THREE.MathUtils.degToRad(60 * (1 - returnT));
-      hand.rotation.z = 0;
-    }
-  }
-  break;
-}
+          // Phase 1: Raise arm (0–0.25)
+          if (tNorm < 0.25) {
+            const raiseT = tNorm / 0.25;
+            upper.rotation.z = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(70), raiseT); // Raise to shoulder height
+            upper.rotation.x = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(-20), raiseT); // Slight forward tilt
+            lower.rotation.z = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(-150), raiseT); // Bend elbow
+          } 
+          // Phase 2: Wave motion (0.25–0.75)
+          else if (tNorm < 0.75) {
+            const waveT = (tNorm - 0.25) / 0.5;
+            // Keep arm position steady
+            upper.rotation.z = THREE.MathUtils.degToRad(70);
+            upper.rotation.x = THREE.MathUtils.degToRad(-20);
+            lower.rotation.z = THREE.MathUtils.degToRad(-150);
+            
+            // Wrist wave: 2 full cycles during wave phase
+            const waveAngle = Math.sin(waveT * Math.PI * 4) * THREE.MathUtils.degToRad(20); // 2 cycles, ±20 degrees
+            hand.rotation.z = waveAngle;
+            
+            // Palm facing outward
+            hand.rotation.x = THREE.MathUtils.degToRad(270);
+            hand.rotation.y = THREE.MathUtils.degToRad(0);
+          } 
+          // Phase 3: Lower arm back to rest (0.75–1)
+          else {
+            const lowerT = (tNorm - 0.75) / 0.25;
+            upper.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(70), 0, lowerT);
+            upper.rotation.x = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-20), 0, lowerT);
+            lower.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-150), 0, lowerT);
+            hand.rotation.z = 0;
+            hand.rotation.x = 0;
+            hand.rotation.y = 0;
+          }
+        }
+        break;
+      }
       case 'nod': {
         const head = humanoid.getNormalizedBoneNode('head');
         if (head) head.rotation.x = Math.sin(t * Math.PI * 2) * 0.2;

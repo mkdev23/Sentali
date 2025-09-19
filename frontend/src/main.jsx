@@ -1259,26 +1259,34 @@ async function fetchReport(taskId) {
     
     if (!res.ok) {
       if (res.status === 404) {
-        updateChatEntry(waitIndex, 'sentali', 
-          `❌ Report not found for task ${taskId}\n\n` +
+        const errorMessage = `❌ Report not found for task ${taskId}\n\n` +
           `💡 **Possible reasons:**\n` +
           `• Task ID is incorrect\n` +
           `• Analysis still in progress\n` +
           `• Report expired (try again soon)\n\n` +
-          `🔄 Ready for your next command!`
-        );
+          `🔄 Ready for your next command!`;
+        updateChatEntry(waitIndex, 'sentali', errorMessage);
       } else {
         updateChatEntry(waitIndex, 'sentali', `❌ Report fetch failed: ${report?.error || res.status}`);
       }
     } else {
       const summary = buildAnyRunSummary(report);
+      
+      // Update the chat entry with the full summary text (with Markdown)
       updateChatEntry(waitIndex, 'sentali', summary);
-      await speakAndType(summary, waitIndex);
+      
+      // Clean the summary for TTS (remove Markdown formatting)
+      const cleanTtsText = cleanForTTS(summary);
+      
+      // Speak the clean version aloud
+      await speakAndType(cleanTtsText, waitIndex);
     }
   } catch (err) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
+  
+
 
 // --- Validation helpers ---
 function isValidIp(ip) {
