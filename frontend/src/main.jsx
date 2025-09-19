@@ -1503,7 +1503,6 @@ async function typeOut(index, role, text, totalDurationMs) {
 
 // Accepts both speechText (clean) and displayText (full Markdown)
 async function speakAndType(speechText, index, displayText = null) {
-  // Default to speechText for display if no separate displayText provided
   const uiText = displayText ?? speechText;
 
   if (ttsInflight) {
@@ -1515,7 +1514,6 @@ async function speakAndType(speechText, index, displayText = null) {
   ttsAbortController = new AbortController();
 
   try {
-    // ✅ Use speechText for TTS sanitization
     const clean = sanitizeForTTS(speechText);
     const fetchPromise = fetch(`${backendBase}/api/tts`, {
       method: 'POST',
@@ -1568,10 +1566,8 @@ async function speakAndType(speechText, index, displayText = null) {
     visemeActive = true;
     isSpeaking = true;
 
-    // Set sentiment hold with explicit duration
     setSentimentHold(expression, audio, 0.6, durationMs + 500);
 
-    // ✅ Use uiText (full Markdown) for typing effect in chat bubble
     const typingPromise = typeOut(index, 'agent', uiText, durationMs);
 
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
@@ -1586,7 +1582,6 @@ async function speakAndType(speechText, index, displayText = null) {
     }
 
     const clearFlags = () => {
-      console.log('[TTS] Clearing speaking flags and sentiment');
       visemeActive = false;
       isSpeaking = false;
       if (performance.now() > sentimentLayer.until) {
@@ -1620,6 +1615,8 @@ async function speakAndType(speechText, index, displayText = null) {
     ttsAbortController = null;
   }
 }
+
+
 // ——— Chat UI helpers ———
 function initChatLog() {
   const log = document.getElementById('chat-log');

@@ -21,7 +21,7 @@ public class BingGroundingController : ControllerBase
 
         var projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"];
         var agentId = config["AZURE_AI_AGENT_ID"];
-        var apiVersion = config["AZURE_OPENAI_API_VERSION"]; // Required for Agent Service calls
+        var apiVersion = config["AZURE_AI_API_VERSION"] ?? "2025-04-01-preview"; // Required for Agent Service calls
 
         if (string.IsNullOrWhiteSpace(projectEndpoint) || string.IsNullOrWhiteSpace(agentId))
             throw new InvalidOperationException("AI Foundry project endpoint or agent ID is not configured.");
