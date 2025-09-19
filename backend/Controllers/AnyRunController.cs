@@ -269,26 +269,54 @@ namespace SentaliApp.Controllers
         /// <summary>
         /// Manually trigger TI feed refresh (admin only)
         /// </summary>
-        [HttpPost("ti/refresh")]
-        public async Task<IActionResult> RefreshTiFeed()
+   [HttpPost("ti/refresh")]
+public async Task<IActionResult> RefreshTiFeed()
+{
+    try
+    {
+        var freshData = await FetchTiFeedFromApi();
+        if (freshData != null)
         {
-            try
-            {
-                var freshData = await FetchTiFeedFromApi();
-                if (freshData != null)
-                {
-                    await SaveTiFeedToCache(freshData);
-                    return Ok(new { success = true, message = $"TI feed updated successfully: {freshData.totalCount} IOCs" });
-                }
-                return StatusCode(503, new { error = "Failed to fetch fresh TI feed" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error refreshing TI feed cache");
-                return StatusCode(500, new { error = "Failed to refresh TI feed", details = ex.Message });
-            }
-        }
+            await SaveTiFeedToCache(freshData);
 
+            // Optional: generate SAS URL for verification
+            string? sasUrl = null;
+            if (_blobServiceClient != null)
+            {
+                var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+                var blobClient = containerClient.GetBlobClient("anyrun-ti-feed.json");
+
+                var sasExpiry = DateTimeOffset.UtcNow.AddHours(1);
+                var sasBuilder = new Azure.Storage.Sas.BlobSasBuilder
+                {
+                    BlobContainerName = _containerName,
+                    BlobName = "anyrun-ti-feed.json",
+                    Resource = "b",
+                    StartsOn = DateTimeOffset.UtcNow.AddMinutes(-1),
+                    ExpiresOn = sasExpiry
+                };
+                sasBuilder.SetPermissions(Azure.Storage.Sas.BlobSasPermissions.Read);
+
+                var delegationKey = await _blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, sasExpiry);
+                var sasToken = sasBuilder.ToSasQueryParameters(delegationKey, _blobServiceClient.AccountName).ToString();
+                sasUrl = $"{blobClient.Uri}?{sasToken}";
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = $"TI feed updated successfully: {freshData.totalCount} IOCs",
+                sasUrl
+            });
+        }
+        return StatusCode(503, new { error = "Failed to fetch fresh TI feed" });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error refreshing TI feed cache");
+        return StatusCode(500, new { error = "Failed to refresh TI feed", details = ex.Message });
+    }
+}
         /// <summary>
         /// Get analysis status for a task
         /// </summary>

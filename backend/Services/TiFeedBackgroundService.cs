@@ -24,8 +24,9 @@ namespace SentaliApp.Services
             _logger.LogInformation("TI Feed Background Service started at {Time}", DateTimeOffset.Now);
 
             // Initial update on startup (with delay to avoid startup congestion)
-            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             await UpdateTiFeed();
+            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            
 
             // Schedule recurring updates
             using var timer = new PeriodicTimer(_updateInterval);
