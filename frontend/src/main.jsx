@@ -1326,6 +1326,17 @@ async function getBingGroundingChunks(query) {
   return Array.isArray(data?.chunks) ? data.chunks : [];
 }
 
+// --- Helper: strip Markdown for speech ---
+function stripMarkdown(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, '') // remove code blocks
+    .replace(/`([^`]+)`/g, '$1')    // inline code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+    .replace(/[*_~#>-]/g, '')       // misc markdown chars
+    .replace(/\n{2,}/g, '\n')       // collapse extra newlines
+    .trim();
+}
+
 // --- Unified sendToAgent function ---
 let sendingNow = false;
 
@@ -1412,12 +1423,16 @@ async function sendToAgent() {
     }
 
     // ✅ Add agent reply to history *before* rendering so history + UI stay in sync
-    //    This ensures getRecentContext() will have the agent's last turn for the next request
-    const agentIndex = addChatEntry('agent', ''); // placeholder in UI
     addToHistory('agent', reply);
 
-    // Typing effect into the placeholder
-    await speakAndType(reply, agentIndex);
+    // Create placeholder in UI for typing effect
+    const agentIndex = addChatEntry('agent', '');
+
+    // 🗣 Strip Markdown for speech, but keep full Markdown in UI
+    const speechText = stripMarkdown(reply);
+
+    // Typing effect into the placeholder (UI shows Markdown)
+    await speakAndType(speechText, agentIndex, reply);
 
   } catch (err) {
     console.error('[Agent Error]', err);
@@ -1426,6 +1441,8 @@ async function sendToAgent() {
     sendingNow = false;
   }
 }
+
+
 
 
 
@@ -1484,37 +1501,43 @@ async function typeOut(index, role, text, totalDurationMs) {
   }
 }
 
-async function speakAndType(text, index) {
+// Accepts both speechText (clean) and displayText (full Markdown)
+async function speakAndType(speechText, index, displayText = null) {
+  // Default to speechText for display if no separate displayText provided
+  const uiText = displayText ?? speechText;
+
   if (ttsInflight) {
     console.warn('[TTS] In-flight; aborting previous');
     ttsAbortController?.abort();
-    updateChatEntry(index, 'agent', text);
+    updateChatEntry(index, 'agent', uiText);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
 
   try {
-    const clean = sanitizeForTTS(text);
+    // ✅ Use speechText for TTS sanitization
+    const clean = sanitizeForTTS(speechText);
     const fetchPromise = fetch(`${backendBase}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: clean }),
       signal: ttsAbortController.signal
     });
+
     const res = await Promise.race([
       fetchPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error('TTS timeout')), 60000))
     ]);
     if (!res.ok) {
       console.error('[TTS] HTTP', res.status);
-      updateChatEntry(index, 'agent', text);
+      updateChatEntry(index, 'agent', uiText);
       return;
     }
 
     const body = await res.json().catch(() => null);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl', body);
-      updateChatEntry(index, 'agent', text);
+      updateChatEntry(index, 'agent', uiText);
       return;
     }
 
@@ -1535,7 +1558,7 @@ async function speakAndType(text, index) {
     const durationMs = Math.max(
       (audio.duration > 0 ? audio.duration * 1000 : 0),
       lastVisemeMs + 250,
-      Math.min(12000, text.split(/\s+/).length * 250)
+      Math.min(12000, uiText.split(/\s+/).length * 250)
     );
 
     const expression = body.expression || body.sentiment || 'neutral';
@@ -1546,9 +1569,10 @@ async function speakAndType(text, index) {
     isSpeaking = true;
 
     // Set sentiment hold with explicit duration
-    setSentimentHold(expression, audio, 0.6, durationMs + 500); // Extra 500ms after speech
+    setSentimentHold(expression, audio, 0.6, durationMs + 500);
 
-    const typingPromise = typeOut(index, 'agent', text, durationMs);
+    // ✅ Use uiText (full Markdown) for typing effect in chat bubble
+    const typingPromise = typeOut(index, 'agent', uiText, durationMs);
 
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
@@ -1565,19 +1589,18 @@ async function speakAndType(text, index) {
       console.log('[TTS] Clearing speaking flags and sentiment');
       visemeActive = false;
       isSpeaking = false;
-      // Sentiment should auto-clear via the timer, but ensure it's cleared
       if (performance.now() > sentimentLayer.until) {
         clearSentimentLayer();
       }
       getMgr()?.update();
     };
-    
+
     audio.addEventListener('ended', clearFlags, { once: true });
     setTimeout(clearFlags, safetyMs);
 
     audio.play().catch(err => {
       console.warn('[TTS] Play failed:', err);
-      clearFlags(); // Clear on error too
+      clearFlags();
     });
 
     await typingPromise;
@@ -1588,16 +1611,15 @@ async function speakAndType(text, index) {
     } else {
       console.warn('[TTS] Timeout after 60s');
     }
-    updateChatEntry(index, 'agent', text);
+    updateChatEntry(index, 'agent', displayText ?? speechText);
     isSpeaking = false;
     visemeActive = false;
-    clearSentimentLayer(); // Clear on error
+    clearSentimentLayer();
   } finally {
     ttsInflight = false;
     ttsAbortController = null;
   }
 }
-
 // ——— Chat UI helpers ———
 function initChatLog() {
   const log = document.getElementById('chat-log');
