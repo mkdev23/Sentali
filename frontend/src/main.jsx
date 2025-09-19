@@ -740,6 +740,40 @@ async function safeJsonFetch(url, options) {
   }
   return { res, data };
 }
+// Security KB retrieval
+async function getSecurityKbChunks(query) {
+  try {
+    const res = await fetch(`${backendBase}/api/search/security-kb`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.chunks || [];
+  } catch (err) {
+    console.error('[RAG] Error', err);
+    return [];
+  }
+}
+
+// Bing grounding retrieval
+async function getBingGroundingChunks(query) {
+  try {
+    const res = await fetch(`${backendBase}/api/search/bing-grounding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.chunks || [];
+  } catch (err) {
+    console.error('[Bing Grounding] Error', err);
+    return [];
+  }
+}
+
 
 // --- Enhanced TI query summary ---
 function buildTiQuerySummary(query, data) {

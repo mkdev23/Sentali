@@ -288,6 +288,50 @@ namespace SentaliApp.Controllers
             }
         }
 
+        /// <summary>
+        /// Get analysis status for a task
+        /// </summary>
+        [HttpGet("status/{taskId}")]
+        public async Task<IActionResult> GetAnalysisStatus(string taskId)
+        {
+            if (string.IsNullOrWhiteSpace(taskId))
+                return BadRequest(new { error = "Missing task ID" });
+
+            try
+            {
+                _logger.LogInformation("Fetching status for task: {TaskId}", taskId);
+                var response = await _httpClient.GetAsync($"analysis/{taskId}/status");
+                return await FormatResponse(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching status for task: {TaskId}", taskId);
+                return StatusCode(500, new { error = "Failed to fetch status", details = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get analysis report for a task
+        /// </summary>
+        [HttpGet("report/{taskId}")]
+        public async Task<IActionResult> GetAnalysisReport(string taskId)
+        {
+            if (string.IsNullOrWhiteSpace(taskId))
+                return BadRequest(new { error = "Missing task ID" });
+
+            try
+            {
+                _logger.LogInformation("Fetching report for task: {TaskId}", taskId);
+                var response = await _httpClient.GetAsync($"analysis/{taskId}");
+                return await FormatResponse(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching report for task: {TaskId}", taskId);
+                return StatusCode(500, new { error = "Failed to fetch report", details = ex.Message });
+            }
+        }
+
         // --- TI Feed Management ---
         private async Task<TiFeedData?> GetCachedTiFeed()
         {
