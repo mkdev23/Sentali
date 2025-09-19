@@ -100,6 +100,12 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton(new BlobServiceClient(
+    new Uri("https://sentalistorage23075.blob.core.windows.net"), // ✅ account endpoint only
+    new DefaultAzureCredential()
+));
+
+
 
 var app = builder.Build();
 

@@ -275,41 +275,58 @@ public async Task<IActionResult> RefreshTiFeed()
     try
     {
         var freshData = await FetchTiFeedFromApi();
-        if (freshData != null)
+        if (freshData == null)
         {
-            await SaveTiFeedToCache(freshData);
-
-            // Optional: generate SAS URL for verification
-            string? sasUrl = null;
-            if (_blobServiceClient != null)
-            {
-                var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-                var blobClient = containerClient.GetBlobClient("anyrun-ti-feed.json");
-
-                var sasExpiry = DateTimeOffset.UtcNow.AddHours(1);
-                var sasBuilder = new Azure.Storage.Sas.BlobSasBuilder
-                {
-                    BlobContainerName = _containerName,
-                    BlobName = "anyrun-ti-feed.json",
-                    Resource = "b",
-                    StartsOn = DateTimeOffset.UtcNow.AddMinutes(-1),
-                    ExpiresOn = sasExpiry
-                };
-                sasBuilder.SetPermissions(Azure.Storage.Sas.BlobSasPermissions.Read);
-
-                var delegationKey = await _blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, sasExpiry);
-                var sasToken = sasBuilder.ToSasQueryParameters(delegationKey, _blobServiceClient.AccountName).ToString();
-                sasUrl = $"{blobClient.Uri}?{sasToken}";
-            }
-
-            return Ok(new
-            {
-                success = true,
-                message = $"TI feed updated successfully: {freshData.totalCount} IOCs",
-                sasUrl
-            });
+            return StatusCode(503, new { error = "Failed to fetch fresh TI feed" });
         }
-        return StatusCode(503, new { error = "Failed to fetch fresh TI feed" });
+
+        // Save feed to blob
+        if (_blobServiceClient == null)
+        {
+            _logger.LogError("BlobServiceClient is not configured.");
+            return StatusCode(500, new { error = "Blob storage not configured" });
+        }
+
+        // ✅ Always get container from account-level service client
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        await containerClient.CreateIfNotExistsAsync();
+
+        var blobName = "anyrun-ti-feed.json";
+        var blobClient = containerClient.GetBlobClient(blobName);
+
+        // Serialize and upload
+        var json = JsonSerializer.Serialize(freshData, new JsonSerializerOptions { WriteIndented = false });
+        using (var ms = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+        {
+            await blobClient.UploadAsync(ms, overwrite: true);
+        }
+
+        // ✅ Generate SAS from account-level client
+        string? sasUrl = null;
+        var sasExpiry = DateTimeOffset.UtcNow.AddHours(1);
+        var delegationKey = await _blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, sasExpiry);
+
+        var sasBuilder = new Azure.Storage.Sas.BlobSasBuilder
+        {
+            BlobContainerName = _containerName,
+            BlobName = blobName,
+            Resource = "b",
+            StartsOn = DateTimeOffset.UtcNow.AddMinutes(-1),
+            ExpiresOn = sasExpiry
+        };
+        sasBuilder.SetPermissions(Azure.Storage.Sas.BlobSasPermissions.Read);
+
+        var sasToken = sasBuilder.ToSasQueryParameters(delegationKey, _blobServiceClient.AccountName).ToString();
+        sasUrl = $"{blobClient.Uri}?{sasToken}";
+
+        _logger.LogInformation("TI feed updated successfully: {Count} IOCs", freshData.totalCount);
+
+        return Ok(new
+        {
+            success = true,
+            message = $"TI feed updated successfully: {freshData.totalCount} IOCs",
+            sasUrl
+        });
     }
     catch (Exception ex)
     {

@@ -39,49 +39,58 @@ export class GestureController {
     const { humanoid } = this.vrm;
 
     switch (this.active) {
-              case 'wave': {
-          const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
-          const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
-          const hand = humanoid.getNormalizedBoneNode('rightHand');
+case 'wave': {
+  const upper = humanoid.getNormalizedBoneNode('rightUpperArm');
+  const lower = humanoid.getNormalizedBoneNode('rightLowerArm');
+  const hand = humanoid.getNormalizedBoneNode('rightHand');
 
-          if (upper && lower && hand) {
-            const tNorm = elapsed / this.duration;
+  // Store rest pose once at gesture start
+  if (!this._waveRestPose && upper && lower && hand) {
+    this._waveRestPose = {
+      upperZ: upper.rotation.z,
+      upperX: upper.rotation.x,
+      lowerZ: lower.rotation.z,
+      handX: hand.rotation.x,
+      handY: hand.rotation.y,
+      handZ: hand.rotation.z
+    };
+  }
 
-            // Phase 1: Raise arm (0–0.25)
-            if (tNorm < 0.25) {
-              const raiseT = tNorm / 0.25;
-              upper.rotation.z = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(70), raiseT);
-              upper.rotation.x = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(-20), raiseT);
-              lower.rotation.z = THREE.MathUtils.lerp(0, THREE.MathUtils.degToRad(-150), raiseT);
-              hand.rotation.set(0, 0, 0);
-            }
-            // Phase 2: Left–right wave (0.25–0.75)
-            else if (tNorm < 0.75) {
-              const waveT = (tNorm - 0.25) / 0.5;
-              // Keep arm steady
-              upper.rotation.z = THREE.MathUtils.degToRad(70);
-              upper.rotation.x = THREE.MathUtils.degToRad(-20);
-              lower.rotation.z = THREE.MathUtils.degToRad(-150);
+  if (upper && lower && hand) {
+    const tNorm = elapsed / this.duration;
 
-              // Palm facing outward
-              hand.rotation.x = THREE.MathUtils.degToRad(270);
+    if (tNorm < 0.25) {
+      // Raise arm
+      const raiseT = tNorm / 0.25;
+      upper.rotation.z = THREE.MathUtils.lerp(this._waveRestPose.upperZ, THREE.MathUtils.degToRad(70), raiseT);
+      upper.rotation.x = THREE.MathUtils.lerp(this._waveRestPose.upperX, THREE.MathUtils.degToRad(-20), raiseT);
+      lower.rotation.z = THREE.MathUtils.lerp(this._waveRestPose.lowerZ, THREE.MathUtils.degToRad(-150), raiseT);
+    }
+    else if (tNorm < 0.75) {
+      // Hold arm, wave hand side-to-side
+      upper.rotation.z = THREE.MathUtils.degToRad(70);
+      upper.rotation.x = THREE.MathUtils.degToRad(-20);
+      lower.rotation.z = THREE.MathUtils.degToRad(-150);
 
-              // Y‑axis rotation for side‑to‑side wave (2 cycles)
-              const waveAngle = Math.sin(waveT * Math.PI * 4) * THREE.MathUtils.degToRad(25);
-              hand.rotation.y = waveAngle;
-              hand.rotation.z = 0;
-            }
-            // Phase 3: Lower arm back to rest (0.75–1)
-            else {
-              const lowerT = (tNorm - 0.75) / 0.25;
-              upper.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(70), 0, lowerT);
-              upper.rotation.x = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-20), 0, lowerT);
-              lower.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-150), 0, lowerT);
-              hand.rotation.set(0, 0, 0); // fully reset hand
-            }
-          }
-          break;
-        }
+      hand.rotation.x = THREE.MathUtils.degToRad(270);
+      hand.rotation.y = Math.sin((tNorm - 0.25) / 0.5 * Math.PI * 4) * THREE.MathUtils.degToRad(25);
+      hand.rotation.z = 0;
+    }
+    else {
+      // Lower arm back to rest pose
+      const lowerT = (tNorm - 0.75) / 0.25;
+      upper.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(70), this._waveRestPose.upperZ, lowerT);
+      upper.rotation.x = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-20), this._waveRestPose.upperX, lowerT);
+      lower.rotation.z = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(-150), this._waveRestPose.lowerZ, lowerT);
+      hand.rotation.x = THREE.MathUtils.lerp(THREE.MathUtils.degToRad(270), this._waveRestPose.handX, lowerT);
+      hand.rotation.y = THREE.MathUtils.lerp(0, this._waveRestPose.handY, lowerT);
+      hand.rotation.z = THREE.MathUtils.lerp(0, this._waveRestPose.handZ, lowerT);
+    }
+  }
+  break;
+}
+
+
       case 'nod': {
         const head = humanoid.getNormalizedBoneNode('head');
         if (head) head.rotation.x = Math.sin(t * Math.PI * 2) * 0.2;
