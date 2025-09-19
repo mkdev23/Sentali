@@ -15,8 +15,15 @@ public class BingGroundingController : ControllerBase
     public BingGroundingController(IConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _agentEndpoint = config["SentaliAgent:Endpoint"]; // e.g. https://<region>.api.cognitive.microsoft.com/agents/<project>/<agent>/invoke
-        _agentKey = config["SentaliAgent:Key"];           // AI Foundry project API key
+
+        var projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"];
+        var agentId = config["AZURE_AI_AGENT_ID"];
+        _agentKey = config["AZURE_AI_API_KEY"];
+
+        if (string.IsNullOrWhiteSpace(projectEndpoint) || string.IsNullOrWhiteSpace(agentId) || string.IsNullOrWhiteSpace(_agentKey))
+            throw new InvalidOperationException("AI Foundry project endpoint, agent ID, or API key is not configured.");
+
+        _agentEndpoint = $"{projectEndpoint}/agents/{agentId}/invoke";
     }
 
     [HttpPost]
@@ -27,10 +34,7 @@ public class BingGroundingController : ControllerBase
 
         try
         {
-            var payload = new
-            {
-                input = request.Query
-            };
+            var payload = new { input = request.Query };
 
             var req = new HttpRequestMessage(HttpMethod.Post, _agentEndpoint);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _agentKey);
@@ -38,21 +42,24 @@ public class BingGroundingController : ControllerBase
             req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
             var res = await _httpClient.SendAsync(req);
+            var raw = await res.Content.ReadAsStringAsync();
+
             if (!res.IsSuccessStatusCode)
             {
-                var errBody = await res.Content.ReadAsStringAsync();
-                Console.Error.WriteLine($"[Agent Grounding] Error {res.StatusCode}: {errBody}");
-                return StatusCode((int)res.StatusCode, new { error = "Agent API error", details = errBody });
+                Console.Error.WriteLine($"[Agent Grounding] Error {res.StatusCode}: {raw}");
+                return StatusCode((int)res.StatusCode, new { error = "Agent API error", details = raw });
             }
 
-            using var stream = await res.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
+            Console.WriteLine($"[Agent Grounding] Raw response: {raw}");
 
-            // Adjust parsing based on your agent's JSON output
+            using var doc = JsonDocument.Parse(raw);
+
+            // Adjust this path to match your agent's actual JSON output
             var chunks = doc.RootElement
-                .GetProperty("groundingResults") // or whatever property your agent uses
+                .GetProperty("output") // or whatever top-level property your agent uses
                 .EnumerateArray()
-                .Select(item => new {
+                .Select(item => new
+                {
                     text = item.GetProperty("snippet").GetString(),
                     source = item.GetProperty("url").GetString()
                 })
@@ -63,7 +70,7 @@ public class BingGroundingController : ControllerBase
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[bing-grounding] Error: {ex}");
-            return StatusCode(500, new { error = "Bing grounding failed" });
+            return StatusCode(500, new { error = "Bing grounding failed", details = ex.Message });
         }
     }
 

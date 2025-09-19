@@ -801,7 +801,7 @@ function buildTiQuerySummary(query, data) {
   return summary;
 }
 
-// --- Enhanced ANY.RUN Report Summary with better parsing ---
+// --- Enhanced ANY.RUN Report Summary with correct verdict parsing ---
 function buildAnyRunSummary(report) {
   if (!report) {
     return '⚠️ No report data available';
@@ -817,78 +817,98 @@ function buildAnyRunSummary(report) {
     analysisData = report.data;
   }
 
+  // Extract the main analysis data
+  let mainAnalysis = analysisData.analysis || analysisData;
+
   // Status - ANY.RUN uses "state" or "status" in different locations
-  let status = analysisData.state || analysisData.status || analysisData.verdict || 'Completed';
+  let status = mainAnalysis.state || mainAnalysis.status || 'Completed';
   if (typeof status === 'object') {
     status = status.name || status.value || 'Completed';
   }
   summary += `**Status:** ${status}\n`;
 
   // File info - check multiple possible paths
-  let fileName = analysisData.file?.name || 
-                 analysisData.target?.file?.name || 
-                 analysisData.metadata?.file_name || 
+  let fileName = mainAnalysis.content?.mainObject?.url || 
+                 mainAnalysis.file?.name || 
+                 mainAnalysis.target?.file?.name || 
+                 mainAnalysis.metadata?.file_name || 
                  'URL Analysis';
   if (fileName) summary += `**File:** ${fileName}\n`;
 
-  let fileType = analysisData.file?.type || 
-                 analysisData.target?.file?.type || 
-                 analysisData.metadata?.file_type || 
+  let fileType = mainAnalysis.content?.mainObject?.type || 
+                 mainAnalysis.file?.type || 
+                 mainAnalysis.target?.file?.type || 
+                 mainAnalysis.metadata?.file_type || 
                  'URL';
   if (fileType) summary += `**Type:** ${fileType}\n`;
 
-  let fileSize = analysisData.file?.size || 
-                 analysisData.target?.file?.size || 
-                 analysisData.metadata?.file_size;
-  if (fileSize) summary += `**Size:** ${(fileSize / 1024 / 1024).toFixed(2)} MB\n`;
+  // Threat assessment - Extract from scores.verdict (your actual structure)
+  let verdict = mainAnalysis.scores?.verdict || mainAnalysis.verdict || mainAnalysis.malware?.verdict || 'Unknown';
+  
+  if (verdict && typeof verdict === 'object') {
+    // Found the scores.verdict structure: {score: 37, threatLevel: 0, threatLevelText: "No threats detected"}
+    const verdictScore = verdict.score || 0;
+    const threatLevel = verdict.threatLevel || 0;
+    const threatText = verdict.threatLevelText || 'Unknown';
+    
+    summary += `**Verdict:** Score ${verdictScore}, Threat Level ${threatLevel}, ${threatText}\n`;
+  } else if (verdict) {
+    summary += `**Verdict:** ${verdict}\n`;
+  }
 
-  // Threat assessment - multiple possible locations
-  let verdict = analysisData.verdict || 
-                analysisData.malware?.verdict || 
-                analysisData.analysis?.verdict || 
-                'Unknown';
-  if (verdict) summary += `**Verdict:** ${verdict}\n`;
-
-  // Malware score - check different paths
-  let malScore = analysisData.mal_score || 
-                 analysisData.malware?.score || 
-                 analysisData.analysis?.mal_score || 
-                 analysisData.risk?.score;
+  // Malware score (from verdict.score if available)
+  let malScore = verdict?.score || mainAnalysis.mal_score || mainAnalysis.malware?.score || mainAnalysis.analysis?.mal_score || mainAnalysis.risk?.score;
   if (malScore !== undefined && malScore !== null) {
     summary += `**Malware Score:** ${(malScore * 100).toFixed(1)}%\n`;
   }
 
   // Network activity
-  let networkConnections = analysisData.network?.connections?.length || 
-                          analysisData.network?.length || 
-                          analysisData.connections?.length || 0;
+  let networkConnections = mainAnalysis.network?.connections?.length || 
+                          mainAnalysis.network?.dnsRequests?.length || 
+                          mainAnalysis.network?.length || 
+                          mainAnalysis.connections?.length || 0;
   if (networkConnections > 0) {
     summary += `**Network Activity:** ${networkConnections} connections detected\n`;
   }
 
   // Behavior analysis
-  let behaviors = analysisData.behavior || 
-                  analysisData.malware?.behaviors || 
-                  analysisData.analysis?.behaviors || [];
+  let behaviors = mainAnalysis.behavior || 
+                  mainAnalysis.malware?.behaviors || 
+                  mainAnalysis.analysis?.behaviors || 
+                  mainAnalysis.incidents || [];
   if (Array.isArray(behaviors) && behaviors.length > 0) {
     summary += `**Suspicious Behaviors:** ${behaviors.length} detected\n`;
   }
 
+  // MITRE ATT&CK techniques
+  let mitreTechniques = mainAnalysis.mitre || [];
+  if (Array.isArray(mitreTechniques) && mitreTechniques.length > 0) {
+    const techniqueNames = mitreTechniques.map(t => t.name || t.id).join(', ');
+    summary += `**MITRE ATT&CK:** ${techniqueNames.substring(0, 100)}${techniqueNames.length > 100 ? '...' : ''}\n`;
+  }
+
   // IOCs - check multiple paths
-  let iocs = analysisData.iocs || 
-             analysisData.indicators || 
-             analysisData.network?.iocs || 
-             analysisData.malware?.iocs || [];
+  let iocs = mainAnalysis.iocs || 
+             mainAnalysis.indicators || 
+             mainAnalysis.network?.iocs || 
+             mainAnalysis.malware?.iocs || [];
   if (Array.isArray(iocs) && iocs.length > 0) {
     summary += `**Indicators of Compromise:** ${iocs.length} found\n`;
   }
 
   // Add key findings if available
-  if (analysisData.key_findings || analysisData.summary) {
-    let findings = analysisData.key_findings || analysisData.summary;
-    if (typeof findings === 'string') {
-      summary += `\n**Key Findings:** ${findings.substring(0, 200)}${findings.length > 200 ? '...' : ''}\n`;
-    }
+  if (mainAnalysis.content?.mainObject?.url) {
+    summary += `\n**Target URL:** ${mainAnalysis.content.mainObject.url}\n`;
+  }
+
+  if (mainAnalysis.scores?.verdict?.threatLevelText) {
+    const threatText = mainAnalysis.scores.verdict.threatLevelText;
+    summary += `\n**Threat Assessment:** ${threatText}\n`;
+  }
+
+  // Duration info
+  if (mainAnalysis.duration) {
+    summary += `**Analysis Duration:** ${mainAnalysis.duration} seconds\n`;
   }
 
   return summary;
@@ -1273,23 +1293,27 @@ async function fetchReport(taskId) {
     
     if (!res.ok) {
       if (res.status === 404) {
-        updateChatEntry(waitIndex, 'sentali', 
-          `❌ Report not found for task ${taskId}\n\n` +
+        const errorMessage = `❌ Report not found for task ${taskId}\n\n` +
           `💡 **Possible reasons:**\n` +
           `• Task ID is incorrect\n` +
           `• Analysis still in progress\n` +
           `• Report expired (try again soon)\n\n` +
-          `🔄 Ready for your next command!`
-        );
+          `🔄 Ready for your next command!`;
+        updateChatEntry(waitIndex, 'sentali', errorMessage);
       } else {
         updateChatEntry(waitIndex, 'sentali', `❌ Report fetch failed: ${report?.error || res.status}`);
       }
     } else {
       const summary = buildAnyRunSummary(report);
-      // Update the chat entry with the summary text
+      
+      // Update the chat entry with the full summary text (with Markdown)
       updateChatEntry(waitIndex, 'sentali', summary);
-      // Speak the summary aloud
-      await speakAndType(summary, waitIndex);
+      
+      // Clean the summary for TTS (remove Markdown formatting)
+      const cleanTtsText = cleanForTTS(summary);
+      
+      // Speak the clean version aloud
+      await speakAndType(cleanTtsText, waitIndex);
     }
   } catch (err) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
@@ -1311,6 +1335,7 @@ function isValidSha256(hash) {
 
 
 // --- Unified sendToAgent function ---
+// --- Unified sendToAgent function ---
 let sendingNow = false;
 
 async function sendToAgent() {
@@ -1331,143 +1356,67 @@ async function sendToAgent() {
     return;
   }
 
-  // Record user message in history + UI
   addToHistory('user', msg);
+
+  if (msg.startsWith('scan ')) {
+    analyzeWithAnyRun(msg.slice(5).trim());
+    sendingNow = false;
+    return;
+  }
+
+  handleGreetingTrigger(msg);
+
   addChatEntry('user', msg);
   inputEl.value = '';
 
-  // Create placeholder for agent reply now so we can update it in any branch
-  const agentIndex = addChatEntry('agent', '');
-
-  // --- TI / scan commands ---
-  if (msg.toLowerCase().startsWith('report ')) {
-    const taskId = msg.slice(7).trim();
-    if (!taskId) {
-      updateChatEntry(agentIndex, 'agent', `❌ Please provide a task ID: "report [task-id]"`);
-    } else {
-      fetchReport(taskId);
-    }
-    sendingNow = false;
-    return;
-  }
-
-  if (msg.startsWith('scan ip ')) {
-    const ip = msg.slice(8).trim();
-    if (isValidIp(ip)) {
-      analyzeIpWithAnyRun(ip);
-    } else {
-      updateChatEntry(agentIndex, 'agent', `❌ Invalid IP format: ${ip}`);
-    }
-    sendingNow = false;
-    return;
-  }
-
-  if (msg.startsWith('scan hash ')) {
-    const hash = msg.slice(10).trim();
-    if (isValidSha256(hash)) {
-      analyzeHashWithAnyRun(hash);
-    } else {
-      updateChatEntry(agentIndex, 'agent', `❌ Invalid SHA256 format: ${hash}`);
-    }
-    sendingNow = false;
-    return;
-  }
-
-  if (msg.startsWith('scan url ') || msg.startsWith('scan ')) {
-    const url = msg.slice(msg.startsWith('scan url ') ? 9 : 5).trim();
-    analyzeWithAnyRun(url);
-    sendingNow = false;
-    return;
-  }
-
-  if (msg.toLowerCase() === 'ti status') {
-    checkTiStatus();
-    sendingNow = false;
-    return;
-  }
-
-  // Greeting trigger
-  handleGreetingTrigger(msg);
-
   try {
-    // 🔍 Retrieve KB chunks (safe fallback)
-    let kbChunks = [];
-    try {
-      kbChunks = await getSecurityKbChunks(msg);
-    } catch (err) {
-      console.warn('[RAG] KB retrieval failed:', err);
-    }
+    // 🔍 Retrieve KB chunks
+    const kbChunks = await getSecurityKbChunks(msg);
     const kbContext = kbChunks
       .map((c, i) => `[KB${i + 1}] ${c.text} (source: ${c.source})`)
       .join('\n\n');
 
-    // 🌐 Retrieve Bing grounding chunks if KB empty or query is time-sensitive
+    // 🌐 Retrieve Bing grounding chunks if KB empty or query is time‑sensitive
     let bingContext = '';
     if (!kbChunks.length || /\b(latest|today|recent|new|current)\b/i.test(msg)) {
-      try {
-        const bingChunks = await getBingGroundingChunks(msg);
-        bingContext = bingChunks
-          .map((c, i) => `[B${i + 1}] ${c.text} (source: ${c.source})`)
-          .join('\n\n');
-      } catch (err) {
-        console.warn('[Bing Grounding] retrieval failed:', err);
-      }
+      const bingChunks = await getBingGroundingChunks(msg);
+      bingContext = bingChunks
+        .map((c, i) => `[B${i + 1}] ${c.text} (source: ${c.source})`)
+        .join('\n\n');
     }
 
     // 🧠 Build combined context
-    const combinedContext = `
-Recent conversation (last 10 exchanges):
-${getRecentContext()}
-
-Security KB context:
-${kbContext || '[No relevant KB entries found]'}
-
-Live web context:
-${bingContext || '[No live web context retrieved]'}
-    `;
+    const combinedContext = ` Recent conversation (last 10 exchanges): ${getRecentContext()} Security KB context: ${kbContext} Live web context: ${bingContext} `;
 
     // 💬 Send to backend
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: msg,
-        context: combinedContext
-      })
+      body: JSON.stringify({ text: msg, context: combinedContext })
     });
 
-    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
-    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-
+    const body = await chatRes.json().catch(() => null);
     if (!chatRes.ok) {
-      console.error('[Chat Error]', chatRes.status, body);
-      updateChatEntry(agentIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
-      addToHistory('agent', `[Error]: Failed to contact agent`);
+      addChatEntry('agent', '[Error contacting Agent]');
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      updateChatEntry(agentIndex, 'agent', '[No response from agent]');
-      addToHistory('agent', '[No response from agent]');
+      addChatEntry('agent', '[No response]');
       return;
     }
 
-    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
+    const agentIndex = addChatEntry('agent', '');
     addToHistory('agent', reply);
-
-    // Speak and type into the placeholder
     await speakAndType(reply, agentIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    updateChatEntry(agentIndex, 'agent', `[Network Error]: ${err.message}`);
-    addToHistory('agent', `[Network Error]: ${err.message}`);
+    addChatEntry('agent', '[Error contacting Agent]');
   } finally {
     sendingNow = false;
   }
-}
-
 // --- Greeting trigger helper (SINGLE DEFINITION) ---
 function handleGreetingTrigger(message) {
   if (!message || typeof message !== 'string') return;
@@ -1521,6 +1470,7 @@ async function typeOut(index, role, text, totalDurationMs) {
     console.error('[UI] Typeout error:', error);
     updateChatEntry(index, role, text); // Fallback to full text
   }
+}
 }
 
 async function speakAndType(text, index) {
