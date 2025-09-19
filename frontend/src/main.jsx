@@ -1298,6 +1298,34 @@ function isValidSha256(hash) {
   return /^[a-fA-F0-9]{64}$/.test(hash);
 }
 
+async function getSecurityKbChunks(query) {
+  const res = await fetch(`${backendBase}/api/search/security-kb`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query })
+  });
+  if (!res.ok) {
+    console.error('[KB] HTTP', res.status);
+    return [];
+  }
+  const data = await res.json().catch(() => null);
+  return Array.isArray(data?.chunks) ? data.chunks : [];
+}
+
+async function getBingGroundingChunks(query) {
+  const res = await fetch(`${backendBase}/api/search/bing-grounding`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query })
+  });
+  if (!res.ok) {
+    console.error('[Bing Grounding] HTTP', res.status);
+    return [];
+  }
+  const data = await res.json().catch(() => null);
+  return Array.isArray(data?.chunks) ? data.chunks : [];
+}
+
 // --- Unified sendToAgent function ---
 let sendingNow = false;
 
