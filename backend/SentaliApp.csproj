@@ -24,8 +24,8 @@
     <PackageReference Include="OpenTK" Version="4.9.4" />
     <PackageReference Include="SharpGLTF.Core" Version="1.0.5" />
     <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.5" />
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
-    <PackageReference Include="System.Windows.Extensions" Version="9.0.8" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

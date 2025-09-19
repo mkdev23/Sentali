@@ -2,16 +2,18 @@
 using System.IO;
 using DotNetEnv;
 using Microsoft.AspNetCore.StaticFiles;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 
 using Azure.Identity;
 using Azure.AI.OpenAI;
+using Azure.Storage.Blobs;
 
 using SentaliApp.Services;
 using SentaliApp.SystemMessages;
 using SentaliApp.Models;
+using SentaliApp.Controllers; // Add this for AnyRunController
 
 Env.Load();
 
@@ -22,7 +24,7 @@ builder.Logging.AddAzureWebAppDiagnostics();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
-// 2) Bind to Azure’s assigned PORT before Build()
+// 2) Bind to Azure's assigned PORT before Build()
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://*:{port}");
 
@@ -36,9 +38,6 @@ builder.Services.AddCors(opts =>
          .AllowCredentials());
 });
 
-
-
-
 // 4) WebSocket hub
 builder.Services.AddSingleton<WsHub>();
 
@@ -46,7 +45,35 @@ builder.Services.AddSingleton<WsHub>();
 builder.Services.AddSingleton<DefaultAzureCredential>();
 builder.Services.AddSingleton<GptService>();
 
-// OPTIONAL: register SystemMessage if used elsewhere
+// 6) Azure Blob Storage with SAS URL (for TI feeds)
+builder.Services.AddSingleton<BlobServiceClient?>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var sasUrl = config["ThreatIntelSasUrl"] ?? Environment.GetEnvironmentVariable("THREAT_INTEL_SAS_URL");
+    
+    if (string.IsNullOrEmpty(sasUrl))
+    {
+        return null; // Will use null in controller (fallback to API)
+    }
+
+    try
+    {
+        var uri = new Uri(sasUrl);
+        return new BlobServiceClient(uri);
+    }
+    catch (UriFormatException)
+    {
+        // Log error but don't throw - will fallback to API calls
+        var logger = sp.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning("Invalid ThreatIntelSasUrl format, falling back to API calls");
+        return null;
+    }
+});
+
+// 7) TI Feed Background Service
+builder.Services.AddHostedService<TiFeedBackgroundService>();
+
+// 8) OPTIONAL: register SystemMessage if used elsewhere
 var cfg = builder.Configuration;
 var openAiEndpoint   = cfg["AZURE_OPENAI_ENDPOINT"]   ?? cfg["OPENAI_ENDPOINT"];
 var openAiDeployment = cfg["AZURE_OPENAI_DEPLOYMENT"] ?? cfg["OPENAI_DEPLOYMENT"];
@@ -61,41 +88,48 @@ if (!string.IsNullOrWhiteSpace(openAiEndpoint) &&
     });
 }
 
-// 6) Core services
+// 9) Core services
 builder.Services.AddSingleton<SentimentService>();
 builder.Services.AddSingleton<BlobStorageService>();
 builder.Services.AddSingleton<TtsService>();
 
-// 7) MVC Controllers (if you have any)
+// 10) HttpClient for API calls
+builder.Services.AddHttpClient();
+
+// 11) MVC Controllers + Swagger
 builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
 // Enable WebSockets early in the pipeline
 app.UseWebSockets();
 
-// 8) Dev exception page and CORS
+// 12) Dev exception page and CORS
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
-
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
-    app.UseCors("AllowFrontendDev");
 
-// 9) Static file MIME mapping
+app.UseCors("AllowFrontendDev");
+
+// 13) Static file MIME mapping
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".mp3"] = "audio/mpeg";
 provider.Mappings[".vrm"] = "model/gltf-binary";
 provider.Mappings[".hdr"] = "image/vnd.radiance";
 
-// 10) Serve wwwroot
+// 14) Serve wwwroot
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = provider });
 
-// 11) Serve /tts folder with CORS for dev
+// 15) Serve /tts folder with CORS for dev
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
         Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "tts")),
     RequestPath = "/tts",
     ContentTypeProvider = provider,
@@ -104,15 +138,15 @@ app.UseStaticFiles(new StaticFileOptions
         if (app.Environment.IsDevelopment())
         {
             ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = "http://localhost:5173";
-            ctx.Context.Response.Headers["Vary"]                        = "Origin";
+            ctx.Context.Response.Headers["Vary"] = "Origin";
         }
     }
 });
 
-// 12) Map Controllers
+// 16) Map Controllers
 app.MapControllers();
 
-// 13) Minimal API for /api/chat with surfaced errors
+// 17) Minimal API for /api/chat with surfaced errors
 app.MapPost("/api/chat", async (
     GptService gpt,
     [FromBody] ChatRequest req,
@@ -148,7 +182,7 @@ app.MapPost("/api/chat", async (
     }
 });
 
-// 14) Updated /speak endpoint using TtsService
+// 18) Updated /speak endpoint using TtsService
 app.MapGet("/speak", async (
     TtsService tts,
     string text,
@@ -157,14 +191,14 @@ app.MapGet("/speak", async (
     var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(text);
     return Results.Ok(new
     {
-        status      = "queued",
+        status = "queued",
         text,
         expression,
         visemeCount = visemes.Count
     });
 });
 
-// 15) Pure TTS endpoint — speaks provided text (e.g., GPT reply from /api/chat)
+// 19) Pure TTS endpoint — speaks provided text (e.g., GPT reply from /api/chat)
 app.MapPost("/api/tts", async (
     SentimentService sentiment,
     TtsService tts,
@@ -179,13 +213,13 @@ app.MapPost("/api/tts", async (
 
     try
     {
-        var sent       = await sentiment.GetSentiment(req.Text);
+        var sent = await sentiment.GetSentiment(req.Text);
         var expression = sent switch
         {
-            "Positive" => "happy", // Updated to match model
+            "Positive" => "happy",
             "Negative" => "angry",
             "Mixed" => "surprised",
-            _          => "neutral"
+            _ => "neutral"
         };
 
         var (audioBytes, visemes) = await tts.SynthesizeWithVisemesAsync(req.Text);
@@ -193,24 +227,22 @@ app.MapPost("/api/tts", async (
         var sasUrl = await blob.UploadAndGetSas(audioBytes);
 
         var visemePayload = visemes
-    .Select(v => new VisemePayload
-    {
-        VisemeId = v.VisemeId,
-        TimeMs   = (ulong)(v.AudioOffset / 10000L)
-    })
-    .ToList();
+            .Select(v => new VisemePayload
+            {
+                VisemeId = v.VisemeId,
+                TimeMs = (ulong)(v.AudioOffset / 10000L)
+            })
+            .ToList();
 
         logger.LogInformation("[TTS] Returning {Count} visemes to client", visemePayload.Count);
 
         return Results.Ok(new
         {
-            sentiment  = sent,
+            sentiment = sent,
             expression,
-            audioUrl   = sasUrl,
-            visemes    = visemePayload
+            audioUrl = sasUrl,
+            visemes = visemePayload
         });
-
-
     }
     catch (Exception ex)
     {
@@ -221,10 +253,11 @@ app.MapPost("/api/tts", async (
             statusCode: 500);
     }
 });
-// 16) Health check
+
+// 20) Health check
 app.MapGet("/health", () => Results.Ok("App is running"));
 
-// 17) WebSocket endpoint at /ws
+// 21) WebSocket endpoint at /ws
 app.Map("/ws", wsApp =>
 {
     wsApp.Run(async context =>
@@ -232,7 +265,7 @@ app.Map("/ws", wsApp =>
         if (context.WebSockets.IsWebSocketRequest)
         {
             var socket = await context.WebSockets.AcceptWebSocketAsync();
-            var hub    = context.RequestServices.GetRequiredService<WsHub>();
+            var hub = context.RequestServices.GetRequiredService<WsHub>();
             await hub.HandleClientAsync(socket);
         }
         else

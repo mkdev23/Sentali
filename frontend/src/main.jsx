@@ -719,18 +719,6 @@ function sanitizeForTTS(s) {
   }
   return out.trim();
 }
-// --- Shared helper to safely fetch JSON or fallback ---
-async function safeJsonFetch(url, options) {
-  const res = await fetch(url, options);
-  const text = await res.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { error: 'Invalid JSON from backend', raw: text };
-  }
-  return { res, data };
-}
 
 // --- Shared helper to safely fetch JSON or fallback ---
 async function safeJsonFetch(url, options) {
@@ -745,62 +733,35 @@ async function safeJsonFetch(url, options) {
   return { res, data };
 }
 
-// --- Shared helper to build a readable summary from IOC JSON ---
-function buildAnyRunSummary(report) {
-  if (!report || typeof report !== 'object') {
-    return '[ANY.RUN] No report data available.';
+// --- Enhanced TI query summary ---
+function buildTiQuerySummary(query, data) {
+  if (!data || !data.matches || data.matches.length === 0) {
+    return `✅ No threats found for ${query.type} \`${query.value}\` in ANY.RUN TI feeds\n` +
+           `📊 Feed status: ${data.totalIocs || 0} total IOCs (last updated: ${data.lastUpdated ? new Date(data.lastUpdated).toLocaleString() : 'N/A'})`;
   }
 
-  const domains = report.domains?.map(d => d.domain || d) || [];
-  const ips = report.ips?.map(ip => ip.ip || ip) || [];
-  const hashes = report.hashes?.map(h => h.sha256 || h) || [];
-  const verdict = report.verdict || report.analysisVerdict || 'Unknown verdict';
+  let summary = `🛡 ANY.RUN TI Lookup Results for ${query.type.toUpperCase()}: \`${query.value}\`\n`;
+  summary += `📅 Last feed update: ${data.lastUpdated ? new Date(data.lastUpdated).toLocaleString() : 'N/A'}\n`;
+  summary += `📊 Total IOCs in feed: ${data.totalIocs || 0}\n\n`;
+  summary += `**🚨 Matches Found: ${data.matches.length}**\n\n`;
 
-  let summary = `🛡 ANY.RUN Analysis Summary\n`;
-  summary += `Verdict: ${verdict}\n`;
+  data.matches.forEach((match, index) => {
+    summary += `### Match ${index + 1}\n`;
+    summary += `**Type:** ${match.type?.toUpperCase() || 'Unknown'}\n`;
+    summary += `**IOC ID:** \`${match.iocId || 'N/A'}\`\n`;
+    summary += `**Confidence:** ${match.confidence || 'Unknown'}\n`;
+    summary += `**Platforms:** ${match.platforms || 'N/A'}\n`;
+    summary += `**Created:** ${match.created ? new Date(match.created).toLocaleDateString() : 'N/A'}\n`;
+    summary += `**Details:** ${match.details || 'No additional details'}\n\n`;
+  });
 
-  if (domains.length) summary += `Domains: ${domains.slice(0, 5).join(', ')}\n`;
-  if (ips.length) summary += `IPs: ${ips.slice(0, 5).join(', ')}\n`;
-  if (hashes.length) summary += `SHA256: ${hashes.slice(0, 3).join(', ')}\n`;
-
-  if (domains.length > 5 || ips.length > 5 || hashes.length > 3) {
-    summary += `... (truncated, see full report in ANY.RUN)`;
-  }
-
-  return summary.trim();
-}
-
-// --- Shared polling helper ---
-async function pollAnyRunStatus(taskId) {
-  const start = Date.now();
-  const poll = setInterval(async () => {
-    try {
-      const { data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
-
-      const done = status?.status === 'finished' || status?.state === 'done' || status?.done === true;
-      const failed = status?.status === 'failed' || status?.error;
-
-      if (done || failed || Date.now() - start > 180000) {
-        clearInterval(poll);
-
-        if (failed) {
-          addChatEntry('sentali', `[ANY.RUN failed] ${status?.error || 'Unknown error'}`);
-        } else {
-          const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
-          const summary = buildAnyRunSummary(report);
-          addChatEntry('sentali', summary);
-        }
-      }
-    } catch (err) {
-      clearInterval(poll);
-      addChatEntry('sentali', `[ANY.RUN polling error] ${err.message}`);
-    }
-  }, 5000);
+  summary += `**Full TI feed contains ${data.totalIocs || 0} IOCs - this is just the matching subset.**`;
+  return summary;
 }
 
 // --- URL scan (sandbox analysis) ---
 async function analyzeWithAnyRun(url) {
-  addChatEntry('user', `scan url: ${url}`);
+  addChatEntry('user', `🔍 Scanning URL: ${url}`);
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/url`, {
       method: 'POST',
@@ -809,27 +770,27 @@ async function analyzeWithAnyRun(url) {
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN error] ${data?.error || res.status}`);
+      addChatEntry('sentali', `[ANY.RUN Sandbox error] ${data?.error || res.status}`);
       return;
     }
 
-    const taskId = data.taskUuid || data.taskId || data.id || data.uuid;
+    const taskId = data?.taskId || data?.data?.taskid;
     if (!taskId) {
-      addChatEntry('sentali', '[ANY.RUN error] No task ID returned');
+      addChatEntry('sentali', '❌ [ANY.RUN] No task ID returned from sandbox submission');
       return;
     }
 
-    addChatEntry('sentali', `Started URL analysis. Task: ${taskId}`);
-    pollAnyRunStatus(taskId);
+    addChatEntry('sentali', `✅ URL sandbox analysis submitted! Task ID: \`${taskId}\``);
+    pollSandboxStatus(taskId);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN request error] ${err.message}`);
+    addChatEntry('sentali', `[ANY.RUN Sandbox request error] ${err.message}`);
   }
 }
 
-// --- IP scan (TI feed query) ---
+// --- IP TI lookup ---
 async function analyzeIpWithAnyRun(ip) {
-  addChatEntry('user', `scan ip: ${ip}`);
+  addChatEntry('user', `🌐 Scanning IP: ${ip}`);
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/ip`, {
       method: 'POST',
@@ -842,24 +803,7 @@ async function analyzeIpWithAnyRun(ip) {
       return;
     }
 
-    // Assuming backend returns matching IOCs from cached feed
-    const matches = data.matches || [];
-    if (matches.length === 0) {
-      addChatEntry('sentali', `✅ No threats found for IP: ${ip} in ANY.RUN TI feeds (last updated: ${data.lastUpdated || 'N/A'})`);
-      return;
-    }
-
-    let summary = `🛡 ANY.RUN TI Lookup for IP: ${ip}\n`;
-    summary += `Last feed update: ${data.lastUpdated || 'N/A'}\n\n`;
-    summary += `**Matches Found:** ${matches.length}\n`;
-
-    matches.forEach((match, index) => {
-      summary += `\n**Match ${index + 1}:**\n`;
-      summary += `Type: ${match.type || 'IP'}\n`;
-      summary += `Reputation: ${match.reputation || 'Unknown'}\n`;
-      summary += `Details: ${match.details || 'N/A'}\n`;
-    });
-
+    const summary = buildTiQuerySummary({ type: 'IP', value: ip }, data);
     addChatEntry('sentali', summary);
 
   } catch (err) {
@@ -867,9 +811,9 @@ async function analyzeIpWithAnyRun(ip) {
   }
 }
 
-// --- SHA256 hash scan (TI feed query) ---
+// --- Hash TI lookup ---
 async function analyzeHashWithAnyRun(sha256) {
-  addChatEntry('user', `scan hash: ${sha256}`);
+  addChatEntry('user', `🔐 Scanning Hash: ${sha256}`);
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/hash`, {
       method: 'POST',
@@ -882,29 +826,147 @@ async function analyzeHashWithAnyRun(sha256) {
       return;
     }
 
-    // Assuming backend returns matching IOCs from cached feed
-    const matches = data.matches || [];
-    if (matches.length === 0) {
-      addChatEntry('sentali', `✅ No threats found for SHA256: ${sha256} in ANY.RUN TI feeds (last updated: ${data.lastUpdated || 'N/A'})`);
-      return;
-    }
-
-    let summary = `🛡 ANY.RUN TI Lookup for SHA256: ${sha256}\n`;
-    summary += `Last feed update: ${data.lastUpdated || 'N/A'}\n\n`;
-    summary += `**Matches Found:** ${matches.length}\n`;
-
-    matches.forEach((match, index) => {
-      summary += `\n**Match ${index + 1}:**\n`;
-      summary += `Type: ${match.type || 'Hash'}\n`;
-      summary += `Reputation: ${match.reputation || 'Unknown'}\n`;
-      summary += `Details: ${match.details || 'N/A'}\n`;
-    });
-
+    const summary = buildTiQuerySummary({ type: 'SHA256', value: sha256 }, data);
     addChatEntry('sentali', summary);
 
   } catch (err) {
     addChatEntry('sentali', `[ANY.RUN TI request error] ${err.message}`);
   }
+}
+
+// --- Enhanced sandbox status polling ---
+async function pollSandboxStatus(taskId) {
+  const start = Date.now();
+  const maxDuration = 180000; // 3 minutes
+  
+  addChatEntry('sentali', `🔄 Sandbox analysis started (Task: ${taskId}). Monitoring progress...`);
+  
+  const poll = setInterval(async () => {
+    try {
+      const { data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
+
+      const isRunning = status?.status === 'running' || status?.state === 'running' || status?.remaining > 0;
+      const isDone = status?.status === 'finished' || status?.status === 'done' || status?.completed === true;
+      const isFailed = status?.status === 'failed' || status?.error || status?.status === 'error';
+
+      if (isDone || isFailed || Date.now() - start > maxDuration) {
+        clearInterval(poll);
+
+        if (isFailed) {
+          addChatEntry('sentali', `❌ [ANY.RUN Sandbox] Analysis failed: ${status?.error || status?.message || 'Unknown error'}`);
+        } else if (isDone) {
+          addChatEntry('sentali', `✅ [ANY.RUN Sandbox] Analysis completed! Generating report...`);
+          
+          try {
+            const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
+            // Use existing buildAnyRunSummary or enhanced version
+            const summary = buildAnyRunSummary(report);
+            addChatEntry('sentali', summary);
+          } catch (reportErr) {
+            addChatEntry('sentali', `⚠️ [ANY.RUN Report error] ${reportErr.message}`);
+          }
+        } else {
+          addChatEntry('sentali', `⏰ [ANY.RUN Sandbox] Analysis timed out after 3 minutes`);
+        }
+      } else if (isRunning) {
+        const remaining = status?.remaining || 60;
+        const progress = Math.max(0, Math.min(100, ((Date.now() - start) / maxDuration) * 100));
+        console.log(`Sandbox progress: ${progress.toFixed(0)}% (${remaining}s remaining)`);
+      }
+    } catch (err) {
+      clearInterval(poll);
+      addChatEntry('sentali', `❌ [ANY.RUN polling error] ${err.message}`);
+    }
+  }, 10000); // Poll every 10 seconds for sandbox
+}
+
+// --- Check TI feed status ---
+async function checkTiStatus() {
+  try {
+    const { data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/status`);
+    if (data.isAvailable) {
+      addChatEntry('sentali', `📊 TI Feed Status: Ready (${data.totalIocs} IOCs, last updated ${new Date(data.lastUpdated).toLocaleString()})`);
+    } else {
+      addChatEntry('sentali', `⚠️ TI Feed: Not available yet. Initializing...`);
+    }
+    return data;
+  } catch (err) {
+    console.error('TI status check failed:', err);
+  }
+}
+
+// --- Chat command integration ---
+async function sendToAgent() {
+  if (sendingNow) return;
+  sendingNow = true;
+
+  const inputEl = document.getElementById('agentInput');
+  if (!inputEl) {
+    console.warn('[UI] #agentInput not found');
+    sendingNow = false;
+    return;
+  }
+
+  const msg = inputEl.value.trim();
+  if (!msg) {
+    addChatEntry('agent', '[Please enter a message]');
+    sendingNow = false;
+    return;
+  }
+
+  addToHistory('user', msg);
+
+  // Handle TI commands
+  if (msg.startsWith('scan ip ')) {
+    const ip = msg.slice(8).trim();
+    if (isValidIp(ip)) {
+      analyzeIpWithAnyRun(ip);
+    } else {
+      addChatEntry('sentali', `❌ Invalid IP format: ${ip}`);
+    }
+    sendingNow = false;
+    return;
+  }
+
+  if (msg.startsWith('scan hash ')) {
+    const hash = msg.slice(10).trim();
+    if (isValidSha256(hash)) {
+      analyzeHashWithAnyRun(hash);
+    } else {
+      addChatEntry('sentali', `❌ Invalid SHA256 format: ${hash}`);
+    }
+    sendingNow = false;
+    return;
+  }
+
+  if (msg.startsWith('scan url ')) {
+    const url = msg.slice(9).trim();
+    analyzeWithAnyRun(url);
+    sendingNow = false;
+    return;
+  }
+
+  if (msg.toLowerCase() === 'ti status') {
+    checkTiStatus();
+    sendingNow = false;
+    return;
+  }
+
+  // ... rest of existing sendToAgent logic
+  const userIndex = addChatEntry('user', msg);
+  inputEl.value = '';
+
+  // ... existing chat logic
+}
+
+// --- Validation helpers ---
+function isValidIp(ip) {
+  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  return ipRegex.test(ip);
+}
+
+function isValidSha256(hash) {
+  return /^[a-fA-F0-9]{64}$/.test(hash);
 }
 
 // Reusable typewriter helper
