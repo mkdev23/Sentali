@@ -643,8 +643,8 @@ let conversationHistory = [];
 
 function addToHistory(role, text) {
   conversationHistory.push({ role, text });
-  if (conversationHistory.length > 20) {
-    conversationHistory = conversationHistory.slice(-20);
+  if (conversationHistory.length > 30) { // Increased from 20 to 30 exchanges
+    conversationHistory = conversationHistory.slice(-30);
   }
 }
 
@@ -767,7 +767,7 @@ function buildTiQuerySummary(query, data) {
   return summary;
 }
 
-// --- ANY.RUN Report Summary (MISSING FUNCTION ADDED) ---
+// --- ANY.RUN Report Summary ---
 function buildAnyRunSummary(report) {
   if (!report) {
     return '⚠️ No report data available';
@@ -814,9 +814,17 @@ function buildAnyRunSummary(report) {
   return summary;
 }
 
-// --- URL scan (sandbox analysis) ---
+// --- URL scan (sandbox analysis) with progress ---
 async function analyzeWithAnyRun(url) {
+  // Add user message first
   addChatEntry('user', `🔍 Scanning URL: ${url}`);
+  
+  // Store clean task ID for later use
+  let taskId = null;
+  
+  // Add waiting message immediately
+  const waitIndex = addChatEntry('sentali', `⏳ Please wait while I run the sandbox analysis for ${url}...`);
+  
   try {
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/url`, {
       method: 'POST',
@@ -825,28 +833,47 @@ async function analyzeWithAnyRun(url) {
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN Sandbox error] ${data?.error || res.status}`);
+      // Update waiting message with error
+      updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN Sandbox error] ${data?.error || res.status}`);
       return;
     }
 
-    const taskId = data?.taskId || data?.data?.taskid;
+    taskId = data?.taskId || data?.data?.taskid;
     if (!taskId) {
-      addChatEntry('sentali', '❌ [ANY.RUN] No task ID returned from sandbox submission');
+      // Update waiting message with error
+      updateChatEntry(waitIndex, 'sentali', '❌ [ANY.RUN] No task ID returned from sandbox submission');
       return;
     }
 
-    addChatEntry('sentali', `✅ URL sandbox analysis submitted! Task ID: \`${taskId}\``);
-    pollSandboxStatus(taskId);
+    // Update waiting message with task ID (clean, no concatenation)
+    updateChatEntry(waitIndex, 'sentali', 
+      `✅ URL sandbox analysis submitted!\n` +
+      `Task ID: \`${taskId}\`\n\n` +
+      `🔄 Starting sandbox analysis...\n` +
+      `⏳ This usually takes 1-3 minutes`
+    );
+    
+    // Start polling with the clean taskId
+    pollSandboxStatus(taskId, waitIndex);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN Sandbox request error] ${err.message}`);
+    // Update waiting message with error
+    updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN Sandbox request error] ${err.message}`);
   }
 }
 
-// --- IP TI lookup ---
+// --- IP TI lookup with progress ---
 async function analyzeIpWithAnyRun(ip) {
+  // Add user message first
   addChatEntry('user', `🌐 Scanning IP: ${ip}`);
+  
+  // Add waiting message immediately
+  const waitIndex = addChatEntry('sentali', `🔍 Please wait while I check ${ip} against threat intelligence feeds...`);
+  
   try {
+    // Simulate a brief delay for better UX (optional)
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/ip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -854,22 +881,33 @@ async function analyzeIpWithAnyRun(ip) {
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN TI error] ${data?.error || res.status}`);
+      // Update waiting message with error
+      updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN TI error] ${data?.error || res.status}\n\n💡 Please check the IP format and try again.`);
       return;
     }
 
+    // Replace waiting message with results
     const summary = buildTiQuerySummary({ type: 'IP', value: ip }, data);
-    addChatEntry('sentali', summary);
+    updateChatEntry(waitIndex, 'sentali', summary);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN TI request error] ${err.message}`);
+    // Update waiting message with error
+    updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN TI request error] ${err.message}\n\n💡 Network issue detected. Please try again.`);
   }
 }
 
-// --- Hash TI lookup ---
+// --- Hash TI lookup with progress ---
 async function analyzeHashWithAnyRun(sha256) {
+  // Add user message first
   addChatEntry('user', `🔐 Scanning Hash: ${sha256}`);
+  
+  // Add waiting message immediately
+  const waitIndex = addChatEntry('sentali', `🔍 Please wait while I check this SHA256 hash against threat intelligence databases...`);
+  
   try {
+    // Simulate a brief delay for better UX (optional)
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     const { res, data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/hash`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -877,76 +915,301 @@ async function analyzeHashWithAnyRun(sha256) {
     });
 
     if (!res.ok) {
-      addChatEntry('sentali', `[ANY.RUN TI error] ${data?.error || res.status}`);
+      // Update waiting message with error
+      updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN TI error] ${data?.error || res.status}\n\n💡 Please verify the hash format (64 hex characters) and try again.`);
       return;
     }
 
+    // Replace waiting message with results
     const summary = buildTiQuerySummary({ type: 'SHA256', value: sha256 }, data);
-    addChatEntry('sentali', summary);
+    updateChatEntry(waitIndex, 'sentali', summary);
 
   } catch (err) {
-    addChatEntry('sentali', `[ANY.RUN TI request error] ${err.message}`);
+    // Update waiting message with error
+    updateChatEntry(waitIndex, 'sentali', `❌ [ANY.RUN TI request error] ${err.message}\n\n💡 Network issue detected. Please try again.`);
   }
 }
 
-// --- Enhanced sandbox status polling ---
-async function pollSandboxStatus(taskId) {
+// --- Enhanced sandbox status polling with 404 handling and no concatenation ---
+async function pollSandboxStatus(taskId, waitIndex) {
   const start = Date.now();
   const maxDuration = 180000; // 3 minutes
+  let consecutive404s = 0;
+  const max404s = 3; // Stop after 3 consecutive 404s
+  let lastProgressUpdate = 0; // Track last update time to prevent spam
   
-  addChatEntry('sentali', `🔄 Sandbox analysis started (Task: ${taskId}). Monitoring progress...`);
+  // Store the original task ID to avoid concatenation
+  const originalTaskId = taskId;
+  
+  // Update with initial polling message (clean, no concatenation)
+  updateChatEntry(waitIndex, 'sentali', 
+    `🔄 Sandbox analysis started (Task: ${originalTaskId}). Monitoring progress...\n\n` +
+    `⏳ This usually takes 1-3 minutes for thorough analysis.\n` +
+    `💡 I'll update you when it's ready!`
+  );
   
   const poll = setInterval(async () => {
     try {
-      const { data: status } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${taskId}`);
-
+      const now = Date.now();
+      const elapsed = now - start;
+      
+      // Check for timeout first
+      if (elapsed > maxDuration) {
+        clearInterval(poll);
+        updateChatEntry(waitIndex, 'sentali', 
+          `⏰ [ANY.RUN Sandbox] Analysis timed out after 3 minutes\n\n` +
+          `Task ID: \`${originalTaskId}\`\n\n` +
+          `💡 **What this means:**\n` +
+          `• The sandbox is still processing (complex sites take longer)\n` +
+          `• Or there might be a temporary service issue\n\n` +
+          `🔄 **Next steps:**\n` +
+          `• Wait 2-3 more minutes, then type: \`report ${originalTaskId}\`\n` +
+          `• Check the ANY.RUN dashboard directly\n` +
+          `• Try scanning again with a simpler URL`
+        );
+        return;
+      }
+      
+      const { data: status, res } = await safeJsonFetch(`${backendBase}/api/anyrun/status/${originalTaskId}`);
+      
+      // Handle 404 specifically
+      if (res.status === 404) {
+        consecutive404s++;
+        console.warn(`[ANY.RUN] Status endpoint 404 (${consecutive404s}/${max404s}) for task ${originalTaskId}`);
+        
+        if (consecutive404s >= max404s) {
+          clearInterval(poll);
+          updateChatEntry(waitIndex, 'sentali', 
+            `⚠️ [ANY.RUN Status] Unable to track real-time progress for task ${originalTaskId}\n\n` +
+            `✅ **Good news:** Analysis was submitted successfully!\n` +
+            `Task ID: \`${originalTaskId}\`\n\n` +
+            `⏰ **Estimated completion:** 2-4 minutes\n\n` +
+            `💡 **What to do:**\n` +
+            `• Wait a few minutes, then type: \`report ${originalTaskId}\` to get results\n` +
+            `• Or check the ANY.RUN dashboard directly\n\n` +
+            `🔄 I'll keep checking in the background...`
+          );
+          
+          // Start background polling after a delay
+          setTimeout(() => {
+            backgroundPollForCompletion(originalTaskId, waitIndex, start);
+          }, 60000); // Wait 1 minute before background polling
+          
+          return;
+        }
+        
+        // Show brief status for first few 404s (only update once)
+        if (consecutive404s === 1 && now - lastProgressUpdate > 30000) {
+          updateChatEntry(waitIndex, 'sentali', 
+            `🔄 Sandbox analysis in progress (Task: ${originalTaskId})\n\n` +
+            `⏳ Initializing sandbox environment...\n` +
+            `⏰ This can take 30-60 seconds to start\n\n` +
+            `💡 **Status:** Task submitted, waiting for sandbox to begin analysis...`
+          );
+          lastProgressUpdate = now;
+        }
+        return;
+      }
+      
+      // Reset 404 counter on successful response
+      consecutive404s = 0;
+      
       const isRunning = status?.status === 'running' || status?.state === 'running' || status?.remaining > 0;
       const isDone = status?.status === 'finished' || status?.status === 'done' || status?.completed === true;
       const isFailed = status?.status === 'failed' || status?.error || status?.status === 'error';
 
-      if (isDone || isFailed || Date.now() - start > maxDuration) {
+      if (isDone || isFailed) {
         clearInterval(poll);
 
         if (isFailed) {
-          addChatEntry('sentali', `❌ [ANY.RUN Sandbox] Analysis failed: ${status?.error || status?.message || 'Unknown error'}`);
+          updateChatEntry(waitIndex, 'sentali', 
+            `❌ [ANY.RUN Sandbox] Analysis failed\n\n` +
+            `Task ID: \`${originalTaskId}\`\n` +
+            `Error: ${status?.error || status?.message || 'Unknown error'}\n\n` +
+            `💡 **Troubleshooting:**\n` +
+            `• The URL might be blocked or invalid\n` +
+            `• Try a different URL format (http:// or https://)\n` +
+            `• Check ANY.RUN dashboard for details\n\n` +
+            `🔄 Ready for your next command!`
+          );
         } else if (isDone) {
-          addChatEntry('sentali', `✅ [ANY.RUN Sandbox] Analysis completed! Generating report...`);
+          // Update to show report generation (clean message)
+          updateChatEntry(waitIndex, 'sentali', 
+            `🎉 [ANY.RUN Sandbox] Analysis completed successfully!\n\n` +
+            `Task ID: \`${originalTaskId}\`\n` +
+            `📊 Generating your detailed threat report...\n` +
+            `⏳ This takes just a moment...`
+          );
           
           try {
-            const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
-            // Use existing buildAnyRunSummary or enhanced version
-            const summary = buildAnyRunSummary(report);
-            addChatEntry('sentali', summary);
+            // Wait a bit for the report to be ready
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            const { data: report, res: reportRes } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${originalTaskId}`);
+            
+            if (reportRes.status === 404) {
+              updateChatEntry(waitIndex, 'sentali', 
+                `✅ [ANY.RUN] Analysis complete but report not ready yet\n\n` +
+                `Task ID: \`${originalTaskId}\`\n` +
+                `💡 Try "report ${originalTaskId}" in 30 seconds to get the full analysis\n\n` +
+                `🔄 Analysis finished - I'll remind you to check back!`
+              );
+            } else if (reportRes.ok) {
+              const summary = buildAnyRunSummary(report);
+              updateChatEntry(waitIndex, 'sentali', summary);
+            } else {
+              updateChatEntry(waitIndex, 'sentali', 
+                `✅ [ANY.RUN] Analysis complete but report fetch failed\n\n` +
+                `Task ID: \`${originalTaskId}\`\n` +
+                `Error: ${report?.error || reportRes.status}\n\n` +
+                `💡 Try "report ${originalTaskId}" to fetch manually`
+              );
+            }
           } catch (reportErr) {
-            addChatEntry('sentali', `⚠️ [ANY.RUN Report error] ${reportErr.message}`);
+            updateChatEntry(waitIndex, 'sentali', 
+              `✅ [ANY.RUN Sandbox] Analysis completed but report generation failed\n\n` +
+              `Task ID: \`${originalTaskId}\`\n` +
+              `Error: ${reportErr.message}\n\n` +
+              `💡 **Next steps:**\n` +
+              `• Try "report ${originalTaskId}" to fetch manually\n` +
+              `• Check ANY.RUN dashboard directly\n` +
+              `• The analysis ran but formatting failed`
+            );
           }
-        } else {
-          addChatEntry('sentali', `⏰ [ANY.RUN Sandbox] Analysis timed out after 3 minutes`);
         }
-      } else if (isRunning) {
-        const remaining = status?.remaining || 60;
-        const progress = Math.max(0, Math.min(100, ((Date.now() - start) / maxDuration) * 100));
-        console.log(`Sandbox progress: ${progress.toFixed(0)}% (${remaining}s remaining)`);
+      } else if (isRunning && now - lastProgressUpdate > 30000) { // Update every 30s
+        lastProgressUpdate = now;
+        const remaining = status?.remaining || Math.max(0, Math.ceil((maxDuration - elapsed) / 1000));
+        const progress = Math.max(0, Math.min(100, (elapsed / maxDuration) * 100));
+        
+        let statusMsg = `🔄 Sandbox analysis in progress\n`;
+        statusMsg += `Task ID: \`${originalTaskId}\`\n`;
+        statusMsg += `⏱️ ${remaining}s remaining (~${progress.toFixed(0)}% complete)\n\n`;
+        
+        // Add specific status if available
+        if (status?.progress) {
+          statusMsg += `📊 Current phase: ${status.progress}\n`;
+        }
+        
+        statusMsg += `⏳ Please wait, thorough analysis takes time...\n\n`;
+        statusMsg += `💡 **Pro tip:** Complex sites take 2-3 minutes for full analysis`;
+        
+        updateChatEntry(waitIndex, 'sentali', statusMsg);
       }
+      
     } catch (err) {
-      clearInterval(poll);
-      addChatEntry('sentali', `❌ [ANY.RUN polling error] ${err.message}`);
+      // Handle other errors (network, etc.)
+      console.error('[Sandbox Poll Error]:', err);
+      const elapsed = Date.now() - start;
+      if (elapsed < maxDuration / 2) { // Only show error once early on
+        updateChatEntry(waitIndex, 'sentali', 
+          `⚠️ [Network Issue] Having trouble checking status\n\n` +
+          `Task ID: \`${originalTaskId}\`\n` +
+          `⏳ Analysis is still running - I'll keep trying...\n\n` +
+          `💡 The sandbox continues even if status checks fail`
+        );
+      }
     }
-  }, 10000); // Poll every 10 seconds for sandbox
+  }, 10000); // Poll every 10 seconds
+
+  // Background polling function for when status endpoint is unavailable
+  async function backgroundPollForCompletion(taskId, waitIndex, startTime) {
+    let backgroundAttempts = 0;
+    const maxBackgroundAttempts = 6; // Check every 30s for 3 minutes
+
+    const bgPoll = setInterval(async () => {
+      backgroundAttempts++;
+      
+      try {
+        const { res: reportRes } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
+        
+        if (reportRes.ok) {
+          clearInterval(bgPoll);
+          // Update the original message with report
+          const { data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
+          const summary = buildAnyRunSummary(report);
+          updateChatEntry(waitIndex, 'sentali', 
+            `🎉 **Background Check: Report Ready!**\n\n` + 
+            `Task ID: \`${taskId}\`\n\n` +
+            summary
+          );
+          console.log('[Background Poll] Report retrieved successfully');
+        } else if (reportRes.status === 404) {
+          console.log(`[Background Poll ${backgroundAttempts}/${maxBackgroundAttempts}]: Report not ready yet...`);
+        }
+      } catch (bgErr) {
+        console.log(`[Background Poll ${backgroundAttempts}/${maxBackgroundAttempts}]: Error - ${bgErr.message}`);
+      }
+      
+      if (backgroundAttempts >= maxBackgroundAttempts) {
+        clearInterval(bgPoll);
+        console.log('[Background Poll] Max attempts reached, stopping');
+        // Add a final reminder message
+        updateChatEntry(-1, 'sentali',  // Add new message
+          `💡 **Friendly Reminder:** Your sandbox analysis (Task: ${taskId}) should be ready soon!\n\n` +
+          `Try typing: \`report ${taskId}\` to check for results\n\n` +
+          `⏰ It's been ${Math.round((Date.now() - startTime) / 60000)} minutes since submission`
+        );
+      }
+    }, 30000); // Check every 30 seconds
+  }
 }
 
-// --- Check TI feed status ---
+// --- Check TI feed status with brief wait ---
 async function checkTiStatus() {
+  // Add user message first
+  addChatEntry('user', `Checking TI status...`);
+  
+  // Add waiting message immediately
+  const waitIndex = addChatEntry('sentali', `📊 Checking threat intelligence feed status...`);
+  
   try {
+    // Brief delay for UX
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
     const { data } = await safeJsonFetch(`${backendBase}/api/anyrun/ti/status`);
+    
     if (data.isAvailable) {
-      addChatEntry('sentali', `📊 TI Feed Status: Ready (${data.totalIocs} IOCs, last updated ${new Date(data.lastUpdated).toLocaleString()})`);
+      // Update with success message
+      updateChatEntry(waitIndex, 'sentali', `📊 **TI Feed Status: Ready**\n✅ ${data.totalIocs} threat indicators available\n📅 Last updated: ${new Date(data.lastUpdated).toLocaleString()}\n\n💡 Ready for IP, hash, and URL scans!`);
     } else {
-      addChatEntry('sentali', `⚠️ TI Feed: Not available yet. Initializing...`);
+      // Update with status message
+      updateChatEntry(waitIndex, 'sentali', `⚠️ **TI Feed Status: Initializing**\n⏳ Feed is being populated with threat data...\n\n💡 This usually takes a few minutes on first startup. Try again soon!`);
     }
     return data;
   } catch (err) {
     console.error('TI status check failed:', err);
+    // Update with error message
+    updateChatEntry(waitIndex, 'sentali', `❌ **TI Status Check Failed**\n${err.message}\n\n💡 Please try again or contact support if this persists.`);
+  }
+}
+
+// --- Manual report fetch command ---
+async function fetchReport(taskId) {
+  const waitIndex = addChatEntry('sentali', `📊 Fetching report for task: ${taskId}...`);
+  
+  try {
+    const { res, data: report } = await safeJsonFetch(`${backendBase}/api/anyrun/report/${taskId}`);
+    
+    if (!res.ok) {
+      if (res.status === 404) {
+        updateChatEntry(waitIndex, 'sentali', 
+          `❌ Report not found for task ${taskId}\n\n` +
+          `💡 **Possible reasons:**\n` +
+          `• Task ID is incorrect\n` +
+          `• Analysis still in progress\n` +
+          `• Report expired (try again soon)\n\n` +
+          `🔄 Ready for your next command!`
+        );
+      } else {
+        updateChatEntry(waitIndex, 'sentali', `❌ Report fetch failed: ${report?.error || res.status}`);
+      }
+    } else {
+      const summary = buildAnyRunSummary(report);
+      updateChatEntry(waitIndex, 'sentali', summary);
+    }
+  } catch (err) {
+    updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
 
@@ -989,6 +1252,19 @@ async function sendToAgent() {
   inputEl.value = '';
 
   // Handle TI commands FIRST (they don't go to chat API)
+  if (msg.toLowerCase().startsWith('report ')) {
+    const taskId = msg.slice(7).trim();
+    if (!taskId) {
+      addChatEntry('sentali', `❌ Please provide a task ID: "report [task-id]"`);
+      sendingNow = false;
+      return;
+    }
+    
+    fetchReport(taskId);
+    sendingNow = false;
+    return;
+  }
+
   if (msg.startsWith('scan ip ')) {
     const ip = msg.slice(8).trim();
     if (isValidIp(ip)) {
@@ -1033,7 +1309,7 @@ async function sendToAgent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: msg,
-        context: getRecentContext() // 👈 send last 10 exchanges to backend
+        context: getRecentContext() // 👈 send last 30 exchanges to backend
       })
     });
 
