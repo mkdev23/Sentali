@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Azure.Core;
+using Azure.Identity;
 
 namespace SentaliApp.Controllers;
 
@@ -10,20 +12,22 @@ public class BingGroundingController : ControllerBase
 {
     private readonly HttpClient _httpClient;
     private readonly string _agentEndpoint;
-    private readonly string _agentKey;
+    private readonly TokenCredential _credential;
 
     public BingGroundingController(IConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _httpClient = httpClientFactory.CreateClient();
 
-        var projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"];
+        var projectEndpoint = config["AZURE_AI_PROJECT_ENDPOINT"]; // e.g. https://<resource>.services.ai.azure.com/api/projects/<project>
         var agentId = config["AZURE_AI_AGENT_ID"];
-        _agentKey = config["AZURE_AI_API_KEY"];
 
-        if (string.IsNullOrWhiteSpace(projectEndpoint) || string.IsNullOrWhiteSpace(agentId) || string.IsNullOrWhiteSpace(_agentKey))
-            throw new InvalidOperationException("AI Foundry project endpoint, agent ID, or API key is not configured.");
+        if (string.IsNullOrWhiteSpace(projectEndpoint) || string.IsNullOrWhiteSpace(agentId))
+            throw new InvalidOperationException("AI Foundry project endpoint or agent ID is not configured.");
 
         _agentEndpoint = $"{projectEndpoint}/agents/{agentId}/invoke";
+
+        // Use DefaultAzureCredential so it works locally (Azure CLI) and in App Service (managed identity)
+        _credential = new DefaultAzureCredential();
     }
 
     [HttpPost]
@@ -34,14 +38,20 @@ public class BingGroundingController : ControllerBase
 
         try
         {
+            // Get an access token for the AI Foundry Agent Service
+            var token = await _credential.GetTokenAsync(
+                new TokenRequestContext(new[] { "https://ai.azure.com/.default" }),
+                HttpContext.RequestAborted
+            );
+
             var payload = new { input = request.Query };
 
             var req = new HttpRequestMessage(HttpMethod.Post, _agentEndpoint);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _agentKey);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
             req.Content = new StringContent(JsonSerializer.Serialize(payload));
             req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-            var res = await _httpClient.SendAsync(req);
+            var res = await _httpClient.SendAsync(req, HttpContext.RequestAborted);
             var raw = await res.Content.ReadAsStringAsync();
 
             if (!res.IsSuccessStatusCode)
@@ -54,9 +64,9 @@ public class BingGroundingController : ControllerBase
 
             using var doc = JsonDocument.Parse(raw);
 
-            // Adjust this path to match your agent's actual JSON output
+            // Adjust parsing to match your agent's actual JSON output
             var chunks = doc.RootElement
-                .GetProperty("output") // or whatever top-level property your agent uses
+                .GetProperty("output") // or "groundingResults" depending on your agent
                 .EnumerateArray()
                 .Select(item => new
                 {

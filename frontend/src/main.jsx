@@ -740,40 +740,6 @@ async function safeJsonFetch(url, options) {
   }
   return { res, data };
 }
-// Security KB retrieval
-async function getSecurityKbChunks(query) {
-  try {
-    const res = await fetch(`${backendBase}/api/search/security-kb`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.chunks || [];
-  } catch (err) {
-    console.error('[RAG] Error', err);
-    return [];
-  }
-}
-
-// Bing grounding retrieval
-async function getBingGroundingChunks(query) {
-  try {
-    const res = await fetch(`${backendBase}/api/search/bing-grounding`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.chunks || [];
-  } catch (err) {
-    console.error('[Bing Grounding] Error', err);
-    return [];
-  }
-}
-
 
 // --- Enhanced TI query summary ---
 function buildTiQuerySummary(query, data) {
@@ -1293,34 +1259,26 @@ async function fetchReport(taskId) {
     
     if (!res.ok) {
       if (res.status === 404) {
-        const errorMessage = `❌ Report not found for task ${taskId}\n\n` +
+        updateChatEntry(waitIndex, 'sentali', 
+          `❌ Report not found for task ${taskId}\n\n` +
           `💡 **Possible reasons:**\n` +
           `• Task ID is incorrect\n` +
           `• Analysis still in progress\n` +
           `• Report expired (try again soon)\n\n` +
-          `🔄 Ready for your next command!`;
-        updateChatEntry(waitIndex, 'sentali', errorMessage);
+          `🔄 Ready for your next command!`
+        );
       } else {
         updateChatEntry(waitIndex, 'sentali', `❌ Report fetch failed: ${report?.error || res.status}`);
       }
     } else {
       const summary = buildAnyRunSummary(report);
-      
-      // Update the chat entry with the full summary text (with Markdown)
       updateChatEntry(waitIndex, 'sentali', summary);
-      
-      // Clean the summary for TTS (remove Markdown formatting)
-      const cleanTtsText = cleanForTTS(summary);
-      
-      // Speak the clean version aloud
-      await speakAndType(cleanTtsText, waitIndex);
+      await speakAndType(summary, waitIndex);
     }
   } catch (err) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
-  
-
 
 // --- Validation helpers ---
 function isValidIp(ip) {
@@ -1332,9 +1290,6 @@ function isValidSha256(hash) {
   return /^[a-fA-F0-9]{64}$/.test(hash);
 }
 
-
-
-// --- Unified sendToAgent function ---
 // --- Unified sendToAgent function ---
 let sendingNow = false;
 
@@ -1417,6 +1372,8 @@ async function sendToAgent() {
   } finally {
     sendingNow = false;
   }
+}
+
 // --- Greeting trigger helper (SINGLE DEFINITION) ---
 function handleGreetingTrigger(message) {
   if (!message || typeof message !== 'string') return;
@@ -1470,7 +1427,6 @@ async function typeOut(index, role, text, totalDurationMs) {
     console.error('[UI] Typeout error:', error);
     updateChatEntry(index, role, text); // Fallback to full text
   }
-}
 }
 
 async function speakAndType(text, index) {
