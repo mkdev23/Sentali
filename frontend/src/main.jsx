@@ -1257,6 +1257,8 @@ function isValidSha256(hash) {
   return /^[a-fA-F0-9]{64}$/.test(hash);
 }
 
+
+
 // --- Unified sendToAgent function ---
 let sendingNow = false;
 
@@ -1282,7 +1284,7 @@ async function sendToAgent() {
   addToHistory('user', msg);
   
   // Add user message to chat - this returns the index
-  const userIndex = addChatEntry('user', msg);
+  addChatEntry('user', msg);
   inputEl.value = '';
 
   // Handle TI commands FIRST (they don't go to chat API)
@@ -1338,12 +1340,35 @@ async function sendToAgent() {
   handleGreetingTrigger(msg);
 
   try {
+    // 🔍 Retrieve KB chunks
+    const kbChunks = await getSecurityKbChunks(msg);
+    const kbContext = kbChunks
+      .map((c, i) => `[KB${i + 1}] ${c.text} (source: ${c.source})`)
+      .join('\n\n');
+
+    // 🌐 Retrieve Bing grounding chunks if KB empty or query is time-sensitive
+    let bingContext = '';
+    if (!kbChunks.length || /\b(latest|today|recent|new|current)\b/i.test(msg)) {
+      const bingChunks = await getBingGroundingChunks(msg);
+      bingContext = bingChunks
+        .map((c, i) => `[B${i + 1}] ${c.text} (source: ${c.source})`)
+        .join('\n\n');
+    }
+
+    // 🧠 Build combined context
+    const combinedContext = `
+Recent conversation (last 10 exchanges): ${getRecentContext()}
+Security KB context: ${kbContext || '[No relevant KB entries found]'}
+Live web context: ${bingContext || '[No live web context retrieved]'}
+    `;
+
+    // 💬 Send to backend
     const chatRes = await fetch(`${backendBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: msg,
-        context: getRecentContext() // 👈 send last 30 exchanges to backend
+        context: combinedContext
       })
     });
 
