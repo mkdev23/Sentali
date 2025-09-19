@@ -1347,16 +1347,20 @@ async function sendToAgent() {
     return;
   }
 
+  // ✅ Always add user message to history first
   addToHistory('user', msg);
 
+  // Special-case: ANY.RUN scan trigger
   if (msg.startsWith('scan ')) {
     analyzeWithAnyRun(msg.slice(5).trim());
     sendingNow = false;
     return;
   }
 
+  // Greeting triggers (if any)
   handleGreetingTrigger(msg);
 
+  // Add user message to UI
   addChatEntry('user', msg);
   inputEl.value = '';
 
@@ -1376,8 +1380,17 @@ async function sendToAgent() {
         .join('\n\n');
     }
 
-    // 🧠 Build combined context
-    const combinedContext = ` Recent conversation (last 10 exchanges): ${getRecentContext()} Security KB context: ${kbContext} Live web context: ${bingContext} `;
+    // 🧠 Build combined context from *existing* history
+    const combinedContext = `
+      Recent conversation (last 10 exchanges):
+      ${getRecentContext()}
+
+      Security KB context:
+      ${kbContext}
+
+      Live web context:
+      ${bingContext}
+    `;
 
     // 💬 Send to backend
     const chatRes = await fetch(`${backendBase}/api/chat`, {
@@ -1398,8 +1411,12 @@ async function sendToAgent() {
       return;
     }
 
-    const agentIndex = addChatEntry('agent', '');
+    // ✅ Add agent reply to history *before* rendering so history + UI stay in sync
+    //    This ensures getRecentContext() will have the agent's last turn for the next request
+    const agentIndex = addChatEntry('agent', ''); // placeholder in UI
     addToHistory('agent', reply);
+
+    // Typing effect into the placeholder
     await speakAndType(reply, agentIndex);
 
   } catch (err) {
@@ -1409,6 +1426,8 @@ async function sendToAgent() {
     sendingNow = false;
   }
 }
+
+
 
 // --- Greeting trigger helper (SINGLE DEFINITION) ---
 function handleGreetingTrigger(message) {
