@@ -11,6 +11,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import ChatBlock from './components/ChatBlock.jsx';
 import ChatMessage from './components/ChatMessage.jsx';
+
 // ——— Config & Globals ———
 const backendBase = 'https://sentali-app-6926-e4gwhtajg3dfaphs.eastus2-01.azurewebsites.net';
 
@@ -35,6 +36,10 @@ let blinkTimer = 2 + Math.random() * 3;
 let gazeTimer = 2 + Math.random() * 2;
 let gazeDirection = 0;
 let visemeActive = false; // true while a viseme timeline/schedule is active
+
+// ——— Chat UI State (moved up to avoid undefined errors) ———
+let chatMessages = [];
+let chatRoot = null;
 
 // ——— Scene / Renderer / Camera ———
 const canvas = document.getElementById('c');
@@ -76,7 +81,6 @@ const rim = new THREE.DirectionalLight(0xffffff, 0.8);
 rim.position.set(0, 1.0, -1.0);
 scene.add(rim);
 
-
 // ——— Groups ———
 const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
@@ -86,6 +90,7 @@ scene.add(vrmGroup, skyGroup);
 function getMgr() {
   return exprMgr || currentVRM?.expressionManager || currentVRM?.blendShapeProxy || null;
 }
+
 function isMobile() {
   return /Mobi|Android/i.test(navigator.userAgent);
 }
@@ -217,12 +222,14 @@ function handleBlink(delta) {
     blinkTimer = 2 + Math.random() * 3;
   }
 }
+
 function handleGaze(delta) {
   gazeTimer -= delta;
   if (gazeTimer <= 0) { gazeDirection = (Math.random() - 0.5) * 0.2; gazeTimer = 2 + Math.random() * 2; }
   const head = currentVRM?.humanoid.getNormalizedBoneNode('head') || currentVRM?.scene.getObjectByName('Head');
   if (head) head.rotation.y += (gazeDirection - head.rotation.y) * 0.05;
 }
+
 function handleBreath(t) {
   const chest = currentVRM?.humanoid.getNormalizedBoneNode('chest')
              || currentVRM?.humanoid.getNormalizedBoneNode('upper_chest')
@@ -231,7 +238,6 @@ function handleBreath(t) {
   if (chest) chest.position.y = chestBaseY + Math.sin(t * 0.5) * 0.01;
 }
 
-// ——— Sentiment layer (held over entire utterance) ———
 // ——— Sentiment layer (held over entire utterance) ———
 let sentimentLayer = { name: null, weight: 0, until: 0 };
 
@@ -302,6 +308,7 @@ function setSentimentHold(expression, audio, weight = 0.6, durationMs) {
     }, 100); // Check every 100ms
   }
 }
+
 // ——— Viseme scheduling (fast, non‑neutral, synced to audio or timestamps) ———
 const MOUTH_KEYS = ['aa','ee','ih','oh','ou'];
 const visemeIdToAlias = {
@@ -517,6 +524,7 @@ function resolveToVRMKey(v) {
     : visemeMap[v.VisemeId ?? v.visemeId ?? v.id] ?? v.name ?? null;
   return alias ? expressionMap[alias] ?? null : null;
 }
+
 const VISEME_SCALE = {
   aa: 0.45,
   ee: 0.4,
@@ -759,6 +767,53 @@ function buildTiQuerySummary(query, data) {
   return summary;
 }
 
+// --- ANY.RUN Report Summary (MISSING FUNCTION ADDED) ---
+function buildAnyRunSummary(report) {
+  if (!report) {
+    return '⚠️ No report data available';
+  }
+
+  let summary = `📋 **ANY.RUN Sandbox Report Summary**\n\n`;
+  
+  // Status
+  summary += `**Status:** ${report.status || 'Unknown'}\n`;
+  
+  // Basic info
+  if (report.fileName) summary += `**File:** ${report.fileName}\n`;
+  if (report.fileType) summary += `**Type:** ${report.fileType}\n`;
+  if (report.fileSize) summary += `**Size:** ${report.fileSize}\n`;
+  
+  // Threat assessment
+  if (report.verdict) {
+    summary += `**Verdict:** ${report.verdict}\n`;
+  }
+  
+  // Key findings
+  if (report.malScore || report.malScore === 0) {
+    summary += `**Malware Score:** ${(report.malScore * 100).toFixed(1)}%\n`;
+  }
+  
+  if (report.network) {
+    const connections = report.network.connections || [];
+    summary += `**Network Activity:** ${connections.length} connections detected\n`;
+  }
+  
+  if (report.behavior) {
+    const behaviors = report.behavior || [];
+    if (behaviors.length > 0) {
+      summary += `**Suspicious Behaviors:** ${behaviors.length} detected\n`;
+    }
+  }
+  
+  // IOCs
+  if (report.iocs) {
+    const iocs = report.iocs || [];
+    summary += `**Indicators of Compromise:** ${iocs.length} found\n`;
+  }
+  
+  return summary;
+}
+
 // --- URL scan (sandbox analysis) ---
 async function analyzeWithAnyRun(url) {
   addChatEntry('user', `🔍 Scanning URL: ${url}`);
@@ -895,7 +950,19 @@ async function checkTiStatus() {
   }
 }
 
-// --- Chat command integration ---
+// --- Validation helpers ---
+function isValidIp(ip) {
+  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  return ipRegex.test(ip);
+}
+
+function isValidSha256(hash) {
+  return /^[a-fA-F0-9]{64}$/.test(hash);
+}
+
+// --- Unified sendToAgent function ---
+let sendingNow = false;
+
 async function sendToAgent() {
   if (sendingNow) return;
   sendingNow = true;
@@ -914,9 +981,14 @@ async function sendToAgent() {
     return;
   }
 
+  // Record user message in history
   addToHistory('user', msg);
+  
+  // Add user message to chat - this returns the index
+  const userIndex = addChatEntry('user', msg);
+  inputEl.value = '';
 
-  // Handle TI commands
+  // Handle TI commands FIRST (they don't go to chat API)
   if (msg.startsWith('scan ip ')) {
     const ip = msg.slice(8).trim();
     if (isValidIp(ip)) {
@@ -939,8 +1011,8 @@ async function sendToAgent() {
     return;
   }
 
-  if (msg.startsWith('scan url ')) {
-    const url = msg.slice(9).trim();
+  if (msg.startsWith('scan url ') || msg.startsWith('scan ')) {
+    const url = msg.slice(msg.startsWith('scan url ') ? 9 : 5).trim();
     analyzeWithAnyRun(url);
     sendingNow = false;
     return;
@@ -952,24 +1024,68 @@ async function sendToAgent() {
     return;
   }
 
-  // ... rest of existing sendToAgent logic
-  const userIndex = addChatEntry('user', msg);
-  inputEl.value = '';
+  // Handle greeting trigger (non-blocking)
+  handleGreetingTrigger(msg);
 
-  // ... existing chat logic
+  try {
+    const chatRes = await fetch(`${backendBase}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: msg,
+        context: getRecentContext() // 👈 send last 10 exchanges to backend
+      })
+    });
+
+    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
+    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
+    
+    if (!chatRes.ok) {
+      console.error('[Chat Error]', chatRes.status, body);
+      // Update the user entry with error message
+      updateChatEntry(userIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
+      addToHistory('agent', `[Error]: Failed to contact agent`);
+      return;
+    }
+
+    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
+    if (!reply) {
+      // Update the user entry with no response message
+      updateChatEntry(userIndex, 'agent', '[No response from agent]');
+      addToHistory('agent', '[No response from agent]');
+      return;
+    }
+
+    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
+
+    // Record agent reply in history
+    addToHistory('agent', reply);
+
+    // Update the user entry with the agent's full response (including code)
+    await speakAndType(reply, userIndex);
+
+  } catch (err) {
+    console.error('[Agent Error]', err);
+    // Update the user entry with network error
+    updateChatEntry(userIndex, 'agent', `[Network Error]: ${err.message}`);
+    addToHistory('agent', `[Network Error]: ${err.message}`);
+  } finally {
+    sendingNow = false;
+  }
 }
 
-// --- Validation helpers ---
-function isValidIp(ip) {
-  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-  return ipRegex.test(ip);
+// --- Greeting trigger helper (SINGLE DEFINITION) ---
+function handleGreetingTrigger(message) {
+  if (!message || typeof message !== 'string') return;
+  if (typeof gestures?.play !== 'function' || typeof setSentimentHold !== 'function') return;
+
+  const msg = message.trim().toLowerCase();
+  if (msg === 'hi' || msg === 'hello' || msg.startsWith('hi ') || msg.startsWith('hello ')) {
+    gestures.play('wave');
+    setSentimentHold('happy', null, 0.8, 1500);
+  }
 }
 
-function isValidSha256(hash) {
-  return /^[a-fA-F0-9]{64}$/.test(hash);
-}
-
-// Reusable typewriter helper
 // Reusable typewriter helper — index-based
 async function typeOut(index, role, text, totalDurationMs) {
   if (index < 0 || !chatMessages[index]) {
@@ -1126,10 +1242,8 @@ async function speakAndType(text, index) {
     ttsAbortController = null;
   }
 }
-// ——— Chat UI helpers ———
-let chatMessages = [];
-let chatRoot = null;
 
+// ——— Chat UI helpers ———
 function initChatLog() {
   const log = document.getElementById('chat-log');
   if (!log) {
@@ -1191,100 +1305,6 @@ function updateChatEntry(index, role, text) {
 function onRunCode(code) {
   console.log('[UI] Code execution requested:', code?.substring(0, 50));
   addChatEntry('system', '[Code execution not yet implemented]');
-}
-
-// --- Greeting trigger helper ---
-function handleGreetingTrigger(message) {
-  if (!message || typeof message !== 'string') return;
-  if (typeof gestures?.play !== 'function' || typeof setSentimentHold !== 'function') return;
-
-  const msg = message.trim().toLowerCase();
-  if (msg === 'hi' || msg === 'hello' || msg.startsWith('hi ') || msg.startsWith('hello ')) {
-    gestures.play('wave');
-    setSentimentHold('happy', null, 0.8, 1500);
-  }
-}
-
-let sendingNow = false;
-async function sendToAgent() {
-  if (sendingNow) return;
-  sendingNow = true;
-
-  const inputEl = document.getElementById('agentInput');
-  if (!inputEl) {
-    console.warn('[UI] #agentInput not found');
-    sendingNow = false;
-    return;
-  }
-
-  const msg = inputEl.value.trim();
-  if (!msg) {
-    addChatEntry('agent', '[Please enter a message]');
-    sendingNow = false;
-    return;
-  }
-
-  // Record user message in history
-  addToHistory('user', msg);
-
-  if (msg.startsWith('scan ')) {
-    const url = msg.slice(5).trim();
-    analyzeWithAnyRun(url);
-    sendingNow = false;
-    return;
-  }
-
-  handleGreetingTrigger(msg);
-  
-  // Add user message to chat - this returns the index
-  const userIndex = addChatEntry('user', msg);
-  inputEl.value = '';
-
-  try {
-    const chatRes = await fetch(`${backendBase}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: msg,
-        context: getRecentContext() // 👈 send last 10 exchanges to backend
-      })
-    });
-
-    const isJson = chatRes.headers.get('content-type')?.includes('application/json');
-    const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-    
-    if (!chatRes.ok) {
-      console.error('[Chat Error]', chatRes.status, body);
-      // Update the user entry with error message
-      updateChatEntry(userIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
-      addToHistory('agent', `[Error]: Failed to contact agent`);
-      return;
-    }
-
-    const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
-    if (!reply) {
-      // Update the user entry with no response message
-      updateChatEntry(userIndex, 'agent', '[No response from agent]');
-      addToHistory('agent', '[No response from agent]');
-      return;
-    }
-
-    console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
-
-    // Record agent reply in history
-    addToHistory('agent', reply);
-
-    // Update the user entry with the agent's full response (including code)
-    await speakAndType(reply, userIndex);
-
-  } catch (err) {
-    console.error('[Agent Error]', err);
-    // Update the user entry with network error
-    updateChatEntry(userIndex, 'agent', `[Network Error]: ${err.message}`);
-    addToHistory('agent', `[Network Error]: ${err.message}`);
-  } finally {
-    sendingNow = false;
-  }
 }
 
 // ——— Mic button ———
@@ -1379,14 +1399,10 @@ if (document.readyState === 'loading') {
   initUI();
 }
 
-
-
-
 // --- Main Animation Loop ---
 let lastSentimentActive = false;
 let idleHappyTimer = 0; // Timer for idle happy state
 
-// --- Main Animation Loop ---
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
