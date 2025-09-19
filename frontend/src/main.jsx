@@ -1280,23 +1280,22 @@ async function sendToAgent() {
     return;
   }
 
-  // Record user message in history
+  // Record user message in history + UI
   addToHistory('user', msg);
-  
-  // Add user message to chat - this returns the index
   addChatEntry('user', msg);
   inputEl.value = '';
 
-  // Handle TI commands FIRST (they don't go to chat API)
+  // Create placeholder for agent reply now so we can update it in any branch
+  const agentIndex = addChatEntry('agent', '');
+
+  // --- TI / scan commands ---
   if (msg.toLowerCase().startsWith('report ')) {
     const taskId = msg.slice(7).trim();
     if (!taskId) {
-      addChatEntry('sentali', `❌ Please provide a task ID: "report [task-id]"`);
-      sendingNow = false;
-      return;
+      updateChatEntry(agentIndex, 'agent', `❌ Please provide a task ID: "report [task-id]"`);
+    } else {
+      fetchReport(taskId);
     }
-    
-    fetchReport(taskId);
     sendingNow = false;
     return;
   }
@@ -1306,7 +1305,7 @@ async function sendToAgent() {
     if (isValidIp(ip)) {
       analyzeIpWithAnyRun(ip);
     } else {
-      addChatEntry('sentali', `❌ Invalid IP format: ${ip}`);
+      updateChatEntry(agentIndex, 'agent', `❌ Invalid IP format: ${ip}`);
     }
     sendingNow = false;
     return;
@@ -1317,7 +1316,7 @@ async function sendToAgent() {
     if (isValidSha256(hash)) {
       analyzeHashWithAnyRun(hash);
     } else {
-      addChatEntry('sentali', `❌ Invalid SHA256 format: ${hash}`);
+      updateChatEntry(agentIndex, 'agent', `❌ Invalid SHA256 format: ${hash}`);
     }
     sendingNow = false;
     return;
@@ -1336,12 +1335,17 @@ async function sendToAgent() {
     return;
   }
 
-  // Handle greeting trigger (non-blocking)
+  // Greeting trigger
   handleGreetingTrigger(msg);
 
   try {
-    // 🔍 Retrieve KB chunks
-    const kbChunks = await getSecurityKbChunks(msg);
+    // 🔍 Retrieve KB chunks (safe fallback)
+    let kbChunks = [];
+    try {
+      kbChunks = await getSecurityKbChunks(msg);
+    } catch (err) {
+      console.warn('[RAG] KB retrieval failed:', err);
+    }
     const kbContext = kbChunks
       .map((c, i) => `[KB${i + 1}] ${c.text} (source: ${c.source})`)
       .join('\n\n');
@@ -1349,17 +1353,26 @@ async function sendToAgent() {
     // 🌐 Retrieve Bing grounding chunks if KB empty or query is time-sensitive
     let bingContext = '';
     if (!kbChunks.length || /\b(latest|today|recent|new|current)\b/i.test(msg)) {
-      const bingChunks = await getBingGroundingChunks(msg);
-      bingContext = bingChunks
-        .map((c, i) => `[B${i + 1}] ${c.text} (source: ${c.source})`)
-        .join('\n\n');
+      try {
+        const bingChunks = await getBingGroundingChunks(msg);
+        bingContext = bingChunks
+          .map((c, i) => `[B${i + 1}] ${c.text} (source: ${c.source})`)
+          .join('\n\n');
+      } catch (err) {
+        console.warn('[Bing Grounding] retrieval failed:', err);
+      }
     }
 
     // 🧠 Build combined context
     const combinedContext = `
-Recent conversation (last 10 exchanges): ${getRecentContext()}
-Security KB context: ${kbContext || '[No relevant KB entries found]'}
-Live web context: ${bingContext || '[No live web context retrieved]'}
+Recent conversation (last 10 exchanges):
+${getRecentContext()}
+
+Security KB context:
+${kbContext || '[No relevant KB entries found]'}
+
+Live web context:
+${bingContext || '[No live web context retrieved]'}
     `;
 
     // 💬 Send to backend
@@ -1374,35 +1387,30 @@ Live web context: ${bingContext || '[No live web context retrieved]'}
 
     const isJson = chatRes.headers.get('content-type')?.includes('application/json');
     const body = isJson ? await chatRes.json().catch(() => null) : await chatRes.text().catch(() => '');
-    
+
     if (!chatRes.ok) {
       console.error('[Chat Error]', chatRes.status, body);
-      // Update the user entry with error message
-      updateChatEntry(userIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
+      updateChatEntry(agentIndex, 'agent', `[Error ${chatRes.status}]: ${body?.error || 'Failed to contact agent'}`);
       addToHistory('agent', `[Error]: Failed to contact agent`);
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      // Update the user entry with no response message
-      updateChatEntry(userIndex, 'agent', '[No response from agent]');
+      updateChatEntry(agentIndex, 'agent', '[No response from agent]');
       addToHistory('agent', '[No response from agent]');
       return;
     }
 
     console.log('[UI] Received reply:', reply.substring(0, 50) + '...');
-
-    // Record agent reply in history
     addToHistory('agent', reply);
 
-    // Update the user entry with the agent's full response (including code)
-    await speakAndType(reply, userIndex);
+    // Speak and type into the placeholder
+    await speakAndType(reply, agentIndex);
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    // Update the user entry with network error
-    updateChatEntry(userIndex, 'agent', `[Network Error]: ${err.message}`);
+    updateChatEntry(agentIndex, 'agent', `[Network Error]: ${err.message}`);
     addToHistory('agent', `[Network Error]: ${err.message}`);
   } finally {
     sendingNow = false;
