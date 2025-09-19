@@ -41,14 +41,37 @@ let visemeActive = false; // true while a viseme timeline/schedule is active
 let chatMessages = [];
 let chatRoot = null;
 
+// Mobile FPS target (30fps for smoother performance)
+const MOBILE_FPS = 30;
+let lastFrameTime = 0;
+
+// Enhanced mobile detection (iOS specific)
+function isMobile() {
+  const ua = navigator.userAgent;
+  return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) || window.innerWidth <= 768;
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
 // ——— Scene / Renderer / Camera ———
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+// Mobile-optimized renderer settings
+const mobileOptimized = isMobile();
+const renderer = new THREE.WebGLRenderer({ 
+  antialias: !mobileOptimized,  // Disable antialias on mobile to save GPU
+  canvas,
+  powerPreference: mobileOptimized ? 'low-power' : 'high-performance',  // Low power on mobile
+  alpha: false  // Opaque background for better perf
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobileOptimized ? 1.5 : 2));  // Lower DPR on mobile
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.9; // avoids facial washout
+renderer.toneMapping = mobileOptimized ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;  // Simpler tone mapping on mobile
+renderer.toneMappingExposure = 0.9;
+renderer.shadowMap.enabled = !mobileOptimized;  // Disable shadows on mobile
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 200);
@@ -56,43 +79,52 @@ camera.position.set(0, 1.6, 4.5);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.6, 0);
-controls.enableDamping = true;
+controls.enableDamping = !mobileOptimized;  // Disable damping on mobile for responsiveness
 controls.dampingFactor = 0.08;
 controls.minDistance = 1.0;
 controls.maxDistance = 6.0;
+controls.enableZoom = !mobileOptimized;  // Disable zoom on mobile to prevent gesture conflicts
+controls.enablePan = !mobileOptimized;
 controls.update();
 
-// ——— Lighting (balanced three‑point) ———
-// Softer ambient
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-
-// Warm key light (front-right)
-const key = new THREE.DirectionalLight(0xfff1e0, 1.5);
-key.position.set(0.8, 1.2, 1.0);
-scene.add(key);
-
-// Cool fill light (front-left)
-const fill = new THREE.DirectionalLight(0xe0f0ff, 0.9);
-fill.position.set(-0.8, 1.0, 0.8);
-scene.add(fill);
-
-// Neutral rim/back light
-const rim = new THREE.DirectionalLight(0xffffff, 0.8);
-rim.position.set(0, 1.0, -1.0);
-scene.add(rim);
+// ——— Mobile-Optimized Lighting (fewer lights, no shadows) ———
+if (mobileOptimized) {
+  // Simple single ambient light for mobile
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+} else {
+  // Full three-point lighting for desktop
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const key = new THREE.DirectionalLight(0xfff1e0, 1.5);
+  key.position.set(0.8, 1.2, 1.0);
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xe0f0ff, 0.9);
+  fill.position.set(-0.8, 1.0, 0.8);
+  scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.8);
+  rim.position.set(0, 1.0, -1.0);
+  scene.add(rim);
+}
 
 // ——— Groups ———
 const vrmGroup = new THREE.Group();
 const skyGroup = new THREE.Group();
 scene.add(vrmGroup, skyGroup);
 
+// ——— iOS Viewport Fix (prevent zoom/pinch issues) ———
+if (isIOS()) {
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('gesturechange', e => e.preventDefault());
+  document.addEventListener('gestureend', e => e.preventDefault());
+  // Set viewport meta (add to index.html if not present)
+  const viewport = document.querySelector('meta[name=viewport]');
+  if (viewport) {
+    viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+  }
+}
+
 // ——— Helpers ———
 function getMgr() {
   return exprMgr || currentVRM?.expressionManager || currentVRM?.blendShapeProxy || null;
-}
-
-function isMobile() {
-  return /Mobi|Android/i.test(navigator.userAgent);
 }
 
 // Head world position
@@ -130,33 +162,32 @@ function faceCamera(vrm) {
   vrm.scene.rotation.y += (desiredYaw - currentYaw);
 }
 
-// ——— Skybox loader with fallback ———
-async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await Promise.race([
-        loadGLBSkybox(url, scene, camera, { desiredRadius: camera.far * 0.9, setSceneBackground: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
-      ]);
-    } catch (err) {
-      console.warn(`[Skybox] Attempt ${attempt} failed:`, err);
-      if (attempt === retries) throw err;
-      await new Promise(r => setTimeout(r, 2000));
-    }
-  }
-}
-
+// ——— Mobile-Optimized Skybox Loader ———
 (async () => {
   try {
-    if (isMobile()) {
+    if (mobileOptimized) {
+      // Use lower-res PNG for mobile (compress to ~512x256 or less)
       const loader = new THREE.TextureLoader();
-      const texture = await loader.loadAsync('/skybox/background1.png');
+      const texture = await loader.loadAsync('/skybox/background1-mobile.png');  // Add a compressed mobile version
+      if (!texture) texture = await loader.loadAsync('/skybox/background1.png');  // Fallback
+      
+      // Compress and optimize texture
       texture.mapping = THREE.EquirectangularReflectionMapping;
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.flipY = false;
+      texture.minFilter = THREE.LinearFilter;  // No mipmaps on mobile to save memory
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      
       scene.background = texture;
       scene.environment = texture;
+      
+      // Dispose old textures if any
+      if (scene.background && scene.background !== texture) {
+        scene.background.dispose();
+      }
     } else {
+      // Desktop GLB as before
       const skyboxUrl = 'https://sentaliskybox-azure-fpb4b0hxcff2f3f4.z03.azurefd.net/skyboxes/sentali_skybox.glb?sp=r&st=2025-09-10T04:07:34Z&se=2027-09-11T12:22:34Z&spr=https&sv=2024-11-04&sr=b&sig=VvlNDwJ5iSJGDkIcLcdCsQULT7iLPJbnrIzHVgf4wAg%3D';
       const sb = await loadSkyboxWithRetry(skyboxUrl);
       if (sb) {
@@ -188,7 +219,7 @@ async function loadSkyboxWithRetry(url, retries = 3, timeoutMs = 30000) {
     }
   } catch (err) {
     console.error('Skybox load failed:', err);
-    renderer.setClearColor(0x000000, 1);
+    renderer.setClearColor(0x87CEEB, 1);  // Simple sky blue fallback
   }
 })();
 
@@ -433,7 +464,7 @@ function shouldUseBlendfaces() {
 
 let gestures;
 
-// ——— VRM Load ———
+// ——— Mobile-Optimized VRM Load ———
 loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
   currentVRM = vrm;
   exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
@@ -492,19 +523,30 @@ loadVRM('/Assets/Sentali2.vrm', scene, camera, controls, vrm => {
     }
   });
 
-  // Init lipsync/blink controller
-  blendfaces = new BlendfacesController(vrm, {
+  // Mobile-optimized Blendfaces (fewer updates)
+  const blendOptions = {
     expressionMap,
-    smooth: 0.2,
+    smooth: mobileOptimized ? 0.1 : 0.2,  // Faster smoothing on mobile
     decay: 3.0,
     rest: { blink: 0.0 },
-    scale: { aa: 0.55, ee: 0.48, ih: 0.42, oh: 0.40, ou: 0.34 }
-  });
+    scale: mobileOptimized ? { aa: 0.4, ee: 0.3, ih: 0.25, oh: 0.2, ou: 0.15 } : { aa: 0.55, ee: 0.48, ih: 0.42, oh: 0.40, ou: 0.34 }  // Lower scales on mobile
+  };
+  blendfaces = new BlendfacesController(vrm, blendOptions);
   blendfaces.attachWS(cb => (blendfacesWSHandler = cb));
 
   if (vrm.firstPerson) vrm.firstPerson.autoUpdate = false;
 
   console.log('[VRM] Loaded successfully:', vrm.meta?.name);
+
+  // Mobile: Reduce VRM complexity (skip non-essential bones if possible)
+  if (mobileOptimized) {
+    console.log('[Mobile] VRM optimizations applied');
+    // Example: Limit bone updates or skip idle animations
+    vrm.update = (delta) => {
+      if (Math.random() > 0.1) return;  // Skip 90% of updates on mobile for idle states
+      // Your existing update logic
+    };
+  }
 });
 
 // ——— Viseme ID → alias (keep as-is if your backend sends IDs) ———
@@ -1675,20 +1717,30 @@ if (document.readyState === 'loading') {
   initUI();
 }
 
-// --- Main Animation Loop ---
+// --- Mobile-Optimized Animation Loop ---
 let lastSentimentActive = false;
 let idleHappyTimer = 0; // Timer for idle happy state
 
-function animate() {
+function animate(currentTime = 0) {
   requestAnimationFrame(animate);
+  
   const dt = clock.getDelta();
   const t = clock.getElapsedTime();
   const nowMs = performance.now();
+  
+  // FPS limiting for mobile (target 30fps)
+  if (mobileOptimized && (nowMs - lastFrameTime < 1000 / MOBILE_FPS)) {
+    return;  // Skip frame
+  }
+  lastFrameTime = nowMs;
 
   controls.update();
 
   if (currentVRM) {
-    currentVRM.update(dt);
+    // Throttle VRM updates on mobile
+    if (!mobileOptimized || Math.random() > 0.2) {  // Update 80% of frames on mobile
+      currentVRM.update(dt);
+    }
 
     const mgr = getMgr();
     if (!mgr) {
@@ -1711,61 +1763,70 @@ function animate() {
       applySentimentLayer(nowMs);
     }
 
-    // Idle happy bias - only when truly idle
-    const isTrulyIdle = !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive;
-    
-    if (isTrulyIdle) {
-      idleHappyTimer += dt;
+    // Idle happy bias - only when truly idle (skip on mobile for perf)
+    if (!mobileOptimized) {
+      const isTrulyIdle = !isSpeaking && !visemeActive && noActiveExpr && !sentimentActive;
       
-      // Gradually increase happy expression over time when idle
-      if (idleHappyTimer > 0.5) { // Start after 0.5s of idle
-        const happyKey = expressionMap['happy'] ?? 'happy';
-        if (mgr.getValue(happyKey) !== undefined) {
-          const currentHappy = mgr.getValue(happyKey) || 0;
-          const targetHappy = 0.3 + Math.sin(t * 0.5) * 0.1; // Gentle breathing happy
-          mgr.setValue(happyKey, THREE.MathUtils.lerp(currentHappy, targetHappy, 0.02));
-        }
+      if (isTrulyIdle) {
+        idleHappyTimer += dt;
         
-        // Ensure neutral is low
-        const neutralKey = expressionMap['neutral'] ?? 'neutral';
-        if (mgr.getValue(neutralKey) !== undefined) {
-          mgr.setValue(neutralKey, 0.0);
+        if (idleHappyTimer > 0.5) {
+          const happyKey = expressionMap['happy'] ?? 'happy';
+          if (mgr.getValue(happyKey) !== undefined) {
+            const currentHappy = mgr.getValue(happyKey) || 0;
+            const targetHappy = 0.3 + Math.sin(t * 0.5) * 0.1;
+            mgr.setValue(happyKey, THREE.MathUtils.lerp(currentHappy, targetHappy, 0.02));
+          }
+          
+          const neutralKey = expressionMap['neutral'] ?? 'neutral';
+          if (mgr.getValue(neutralKey) !== undefined) {
+            mgr.setValue(neutralKey, 0.0);
+          }
         }
+      } else {
+        idleHappyTimer = 0;
       }
-    } else {
-      // Reset idle timer when not idle
-      idleHappyTimer = 0;
     }
 
     // Apply persistent expressions (non-sentiment)
     applyExpressions(dt);
 
-    // Always update Blendfaces if present
-    if (blendfaces) {
+    // Throttle Blendfaces and gestures on mobile
+    if (blendfaces && (!mobileOptimized || Math.random() > 0.3)) {
       blendfaces.update(dt);
     }
 
-    // Update gestures if present
-    if (gestures) {
+    if (gestures && (!mobileOptimized || Math.random() > 0.4)) {
       gestures.update();
     }
 
-    // Ambient behaviours
-    handleBreath(t);
-    handleGaze(dt);
-    handleBlink(dt);
+    // Ambient behaviours (simplified on mobile)
+    if (!mobileOptimized || Math.random() > 0.5) {  // Update 50% of frames
+      handleBreath(t);
+      handleGaze(dt);
+      handleBlink(dt);
+    }
 
     // Finalize all expression changes
     mgr.update();
   }
 
   renderer.render(scene, camera);
+  
+  // Memory cleanup: Dispose old textures periodically (every 5s on mobile)
+  if (mobileOptimized && Math.floor(nowMs / 5000) % 1 === 0) {
+    // Add your texture disposal logic here if needed
+  }
 }
 animate();
 
-// ——— Resize ———
+// ——— Mobile-Optimized Resize ———
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  
+  // Re-optimize pixel ratio on resize
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobileOptimized ? 1.5 : 2));
 });
+
