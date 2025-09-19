@@ -801,50 +801,96 @@ function buildTiQuerySummary(query, data) {
   return summary;
 }
 
-// --- ANY.RUN Report Summary ---
+// --- Enhanced ANY.RUN Report Summary with better parsing ---
 function buildAnyRunSummary(report) {
   if (!report) {
     return '⚠️ No report data available';
   }
 
   let summary = `📋 **ANY.RUN Sandbox Report Summary**\n\n`;
+
+  // Handle different ANY.RUN response structures
+  let analysisData = report;
   
-  // Status
-  summary += `**Status:** ${report.status || 'Unknown'}\n`;
-  
-  // Basic info
-  if (report.fileName) summary += `**File:** ${report.fileName}\n`;
-  if (report.fileType) summary += `**Type:** ${report.fileType}\n`;
-  if (report.fileSize) summary += `**Size:** ${report.fileSize}\n`;
-  
-  // Threat assessment
-  if (report.verdict) {
-    summary += `**Verdict:** ${report.verdict}\n`;
+  // If wrapped in "data" object, extract it
+  if (report.data && typeof report.data === 'object') {
+    analysisData = report.data;
   }
-  
-  // Key findings
-  if (report.malScore || report.malScore === 0) {
-    summary += `**Malware Score:** ${(report.malScore * 100).toFixed(1)}%\n`;
+
+  // Status - ANY.RUN uses "state" or "status" in different locations
+  let status = analysisData.state || analysisData.status || analysisData.verdict || 'Completed';
+  if (typeof status === 'object') {
+    status = status.name || status.value || 'Completed';
   }
-  
-  if (report.network) {
-    const connections = report.network.connections || [];
-    summary += `**Network Activity:** ${connections.length} connections detected\n`;
+  summary += `**Status:** ${status}\n`;
+
+  // File info - check multiple possible paths
+  let fileName = analysisData.file?.name || 
+                 analysisData.target?.file?.name || 
+                 analysisData.metadata?.file_name || 
+                 'URL Analysis';
+  if (fileName) summary += `**File:** ${fileName}\n`;
+
+  let fileType = analysisData.file?.type || 
+                 analysisData.target?.file?.type || 
+                 analysisData.metadata?.file_type || 
+                 'URL';
+  if (fileType) summary += `**Type:** ${fileType}\n`;
+
+  let fileSize = analysisData.file?.size || 
+                 analysisData.target?.file?.size || 
+                 analysisData.metadata?.file_size;
+  if (fileSize) summary += `**Size:** ${(fileSize / 1024 / 1024).toFixed(2)} MB\n`;
+
+  // Threat assessment - multiple possible locations
+  let verdict = analysisData.verdict || 
+                analysisData.malware?.verdict || 
+                analysisData.analysis?.verdict || 
+                'Unknown';
+  if (verdict) summary += `**Verdict:** ${verdict}\n`;
+
+  // Malware score - check different paths
+  let malScore = analysisData.mal_score || 
+                 analysisData.malware?.score || 
+                 analysisData.analysis?.mal_score || 
+                 analysisData.risk?.score;
+  if (malScore !== undefined && malScore !== null) {
+    summary += `**Malware Score:** ${(malScore * 100).toFixed(1)}%\n`;
   }
-  
-  if (report.behavior) {
-    const behaviors = report.behavior || [];
-    if (behaviors.length > 0) {
-      summary += `**Suspicious Behaviors:** ${behaviors.length} detected\n`;
-    }
+
+  // Network activity
+  let networkConnections = analysisData.network?.connections?.length || 
+                          analysisData.network?.length || 
+                          analysisData.connections?.length || 0;
+  if (networkConnections > 0) {
+    summary += `**Network Activity:** ${networkConnections} connections detected\n`;
   }
-  
-  // IOCs
-  if (report.iocs) {
-    const iocs = report.iocs || [];
+
+  // Behavior analysis
+  let behaviors = analysisData.behavior || 
+                  analysisData.malware?.behaviors || 
+                  analysisData.analysis?.behaviors || [];
+  if (Array.isArray(behaviors) && behaviors.length > 0) {
+    summary += `**Suspicious Behaviors:** ${behaviors.length} detected\n`;
+  }
+
+  // IOCs - check multiple paths
+  let iocs = analysisData.iocs || 
+             analysisData.indicators || 
+             analysisData.network?.iocs || 
+             analysisData.malware?.iocs || [];
+  if (Array.isArray(iocs) && iocs.length > 0) {
     summary += `**Indicators of Compromise:** ${iocs.length} found\n`;
   }
-  
+
+  // Add key findings if available
+  if (analysisData.key_findings || analysisData.summary) {
+    let findings = analysisData.key_findings || analysisData.summary;
+    if (typeof findings === 'string') {
+      summary += `\n**Key Findings:** ${findings.substring(0, 200)}${findings.length > 200 ? '...' : ''}\n`;
+    }
+  }
+
   return summary;
 }
 
@@ -1240,12 +1286,17 @@ async function fetchReport(taskId) {
       }
     } else {
       const summary = buildAnyRunSummary(report);
+      // Update the chat entry with the summary text
       updateChatEntry(waitIndex, 'sentali', summary);
+      // Speak the summary aloud
+      await speakAndType(summary, waitIndex);
     }
   } catch (err) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
+  
+
 
 // --- Validation helpers ---
 function isValidIp(ip) {
