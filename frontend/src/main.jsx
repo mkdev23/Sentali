@@ -1285,7 +1285,85 @@ async function fetchReport(taskId) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
-  
+
+// --- CVE Summarizer Integration ---
+async function analyzeCve(query) {
+  const waitIndex = addChatEntry('sentali', `🛡️ Summarizing vulnerability: ${query}`);
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/cve-summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!res.ok) {
+      updateChatEntry(waitIndex, 'sentali', `❌ Error: ${data?.error || res.status}`);
+      return;
+    }
+    const summary = data.summary || `${data.description}\nSeverity: ${data.severity}\nMitigations: ${data.mitigations}`;
+    updateChatEntry(waitIndex, 'sentali', summary);
+    const clean = stripMarkdown(summary);
+    speakAndType(clean, waitIndex, summary);
+  } catch (err) {
+    updateChatEntry(waitIndex, 'sentali', `❌ Error: ${err.message}`);
+  }
+}
+
+// --- Static Analysis Integration ---
+async function runStaticReview(code, language) {
+  const waitIndex = addChatEntry('sentali', `🔍 Running static analysis on ${language} code...`);
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/static-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, language })
+    });
+    if (!res.ok) {
+      updateChatEntry(waitIndex, 'sentali', `❌ Error: ${data?.error || res.status}`);
+      return;
+    }
+    const findings = data.findings;
+    // Post-process findings
+    updateChatEntry(waitIndex, 'sentali', `✅ Static analysis complete. Explaining and suggesting fixes...`);
+    const explainRes = await fetch(`${backendBase}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        text: "Explain and fix these issues",
+        context: JSON.stringify(findings) + '\n' + getRecentContext()
+      })
+    });
+    const explainBody = await explainRes.json();
+    const remediation = explainBody.text || explainBody.reply;
+    updateChatEntry(waitIndex, 'sentali', remediation);
+    const clean = stripMarkdown(remediation);
+    speakAndType(clean, waitIndex, remediation);
+  } catch (err) {
+    updateChatEntry(waitIndex, 'sentali', `❌ Error: ${err.message}`);
+  }
+}
+
+// --- Threat Modeling Integration ---
+async function modelThreats(description) {
+  const waitIndex = addChatEntry('sentali', `🧩 Modeling threats for: ${description.substring(0, 50)}...`);
+  try {
+    const { res, data } = await safeJsonFetch(`${backendBase}/api/threat-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description })
+    });
+    if (!res.ok) {
+      updateChatEntry(waitIndex, 'sentali', `❌ Error: ${data?.error || res.status}`);
+      return;
+    }
+    const risks = data.risks;
+    const summary = `**STRIDE Risks:**\n${risks.riskMatrix}\n\n**Mitigations:**\n${risks.controls}`;
+    updateChatEntry(waitIndex, 'sentali', summary);
+    const clean = stripMarkdown(summary);
+    speakAndType(clean, waitIndex, summary);
+  } catch (err) {
+    updateChatEntry(waitIndex, 'sentali', `❌ Error: ${err.message}`);
+  }
+}
 
 
 // --- Validation helpers ---
@@ -1364,6 +1442,39 @@ async function sendToAgent() {
   // Special-case: ANY.RUN scan trigger
   if (msg.startsWith('scan ')) {
     analyzeWithAnyRun(msg.slice(5).trim());
+    sendingNow = false;
+    return;
+  }
+
+  // CVE summary trigger
+  const cveMatch = msg.match(/summarize\s*(CVE-\d{4}-\d+)/i) || msg.match(/(CVE-\d{4}-\d+)/i);
+  if (cveMatch) {
+    addChatEntry('user', msg);
+    inputEl.value = '';
+    analyzeCve(cveMatch[1]);
+    sendingNow = false;
+    return;
+  }
+
+  // Static analysis trigger
+  const staticMatch = msg.match(/```(\w*)\n([\s\S]*?)\n```/);
+  if (staticMatch || msg.toLowerCase().includes('run static') || msg.toLowerCase().includes('analyze code')) {
+    if (staticMatch) {
+      const language = staticMatch[1] || 'python';
+      const code = staticMatch[2];
+      addChatEntry('user', msg);
+      inputEl.value = '';
+      runStaticReview(code, language);
+      sendingNow = false;
+      return;
+    }
+  }
+
+  // Threat modeling trigger
+  if (msg.toLowerCase().includes('model threats') || msg.toLowerCase().includes('analyze system risks')) {
+    addChatEntry('user', msg);
+    inputEl.value = '';
+    modelThreats(msg);
     sendingNow = false;
     return;
   }
