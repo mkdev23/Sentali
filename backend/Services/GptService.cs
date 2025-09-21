@@ -58,10 +58,15 @@ namespace SentaliApp.Services
             return res;
         }
 
-        public async Task<string> GetResponse(string input)
+        public async Task<string> GetResponse(string input, string? context = null)
         {
             try
             {
+                // Build prompt with context if provided
+                var fullPrompt = context != null && !string.IsNullOrWhiteSpace(context)
+                    ? $"{context}\n\nUser: {input}"
+                    : input;
+
                 _logger.LogInformation("[Assistants REST] Endpoint: {Endpoint}", _projectEndpoint);
                 _logger.LogInformation("[Assistants REST] AssistantId: {AssistantId}", _agentId);
                 _logger.LogInformation("[Assistants REST] API version: {ApiVersion}", _apiVersion);
@@ -111,7 +116,7 @@ namespace SentaliApp.Services
 
                 // 2) Post the user message
                 var msgUrl = $"{_projectEndpoint}/threads/{threadId}/messages?api-version={_apiVersion}";
-                var msgPayload = JsonSerializer.Serialize(new { role = "user", content = input });
+                var msgPayload = JsonSerializer.Serialize(new { role = "user", content = fullPrompt });
                 var msgRes = await SendWithLogging(
                     () => _http.PostAsync(
                         msgUrl,

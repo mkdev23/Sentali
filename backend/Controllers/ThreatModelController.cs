@@ -1,4 +1,3 @@
-// Add this new file: Controllers/ThreatModelController.cs
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using SentaliApp.Services;
@@ -19,7 +18,11 @@ namespace SentaliApp.Controllers
             _logger = logger;
         }
 
-        public class ModelRequest { public string? Description { get; set; } }
+        public class ModelRequest 
+        { 
+            public string? Description { get; set; }
+            public string? Context { get; set; }
+        }
 
         [HttpPost]
         public async Task<IActionResult> ModelThreats([FromBody] ModelRequest req)
@@ -33,6 +36,8 @@ namespace SentaliApp.Controllers
                 var prompt = $@"
 Analyze the following system for threats using STRIDE model.
 System: {req.Description}
+
+Context: {req.Context ?? ""}
 
 Output strictly in JSON with schema:
 {{
