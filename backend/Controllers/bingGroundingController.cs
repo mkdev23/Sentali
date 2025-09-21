@@ -1,4 +1,4 @@
-//binigroundingController.cs
+// Controllers/bingGroundingController.cs
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -98,6 +98,6 @@ public class BingGroundingController : ControllerBase
 
     public class QueryRequest
     {
-        public string Query { get; set; }
+        public required string Query { get; set; }
     }
 }

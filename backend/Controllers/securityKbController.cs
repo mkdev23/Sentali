@@ -1,3 +1,4 @@
+// Controllers/securityKbController.cs
 using Azure;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
@@ -69,6 +70,6 @@ public class SecurityKbController : ControllerBase
 
     public class QueryRequest
     {
-        public string Query { get; set; }
+        public required string Query { get; set; }
     }
 }

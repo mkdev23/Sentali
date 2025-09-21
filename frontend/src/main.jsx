@@ -1285,6 +1285,8 @@ async function fetchReport(taskId) {
     updateChatEntry(waitIndex, 'sentali', `❌ Report fetch error: ${err.message}`);
   }
 }
+    
+
 
 // --- CVE Summarizer Integration ---
 async function analyzeCve(query) {
@@ -1365,7 +1367,6 @@ async function modelThreats(description) {
   }
 }
 
-
 // --- Validation helpers ---
 function isValidIp(ip) {
   const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
@@ -1431,7 +1432,7 @@ async function sendToAgent() {
 
   const msg = inputEl.value.trim();
   if (!msg) {
-    addChatEntry('agent', '[Please enter a message]');
+    addChatEntry('sentali', '[Please enter a message]');
     sendingNow = false;
     return;
   }
@@ -1523,21 +1524,21 @@ async function sendToAgent() {
 
     const body = await chatRes.json().catch(() => null);
     if (!chatRes.ok) {
-      addChatEntry('agent', '[Error contacting Agent]');
+      addChatEntry('sentali', '[Error contacting Agent]');
       return;
     }
 
     const reply = (body?.text ?? body?.reply ?? body?.message ?? '').toString().trim();
     if (!reply) {
-      addChatEntry('agent', '[No response]');
+      addChatEntry('sentali', '[No response]');
       return;
     }
 
     // ✅ Add agent reply to history *before* rendering so history + UI stay in sync
-    addToHistory('agent', reply);
+    addToHistory('sentali', reply);
 
     // Create placeholder in UI for typing effect
-    const agentIndex = addChatEntry('agent', '');
+    const agentIndex = addChatEntry('sentali', '');
 
     // 🗣 Strip Markdown for speech, but keep full Markdown in UI
     const speechText = stripMarkdown(reply);
@@ -1547,7 +1548,7 @@ async function sendToAgent() {
 
   } catch (err) {
     console.error('[Agent Error]', err);
-    addChatEntry('agent', '[Error contacting Agent]');
+    addChatEntry('sentali', '[Error contacting Agent]');
   } finally {
     sendingNow = false;
   }
@@ -1619,7 +1620,7 @@ async function speakAndType(speechText, index, displayText = null) {
   if (ttsInflight) {
     console.warn('[TTS] In-flight; aborting previous');
     ttsAbortController?.abort();
-    updateChatEntry(index, 'agent', uiText);
+    updateChatEntry(index, 'sentali', uiText);
   }
   ttsInflight = true;
   ttsAbortController = new AbortController();
@@ -1639,14 +1640,14 @@ async function speakAndType(speechText, index, displayText = null) {
     ]);
     if (!res.ok) {
       console.error('[TTS] HTTP', res.status);
-      updateChatEntry(index, 'agent', uiText);
+      updateChatEntry(index, 'sentali', uiText);
       return;
     }
 
     const body = await res.json().catch(() => null);
     if (!body?.audioUrl) {
       console.warn('[TTS] No audioUrl', body);
-      updateChatEntry(index, 'agent', uiText);
+      updateChatEntry(index, 'sentali', uiText);
       return;
     }
 
@@ -1679,7 +1680,7 @@ async function speakAndType(speechText, index, displayText = null) {
 
     setSentimentHold(expression, audio, 0.6, durationMs + 500);
 
-    const typingPromise = typeOut(index, 'agent', uiText, durationMs);
+    const typingPromise = typeOut(index, 'sentali', uiText, durationMs);
 
     if (shouldUseBlendfaces() && blendfaces?.loadTimeline) {
       if (items.length) {
@@ -1717,7 +1718,7 @@ async function speakAndType(speechText, index, displayText = null) {
     } else {
       console.warn('[TTS] Timeout after 60s');
     }
-    updateChatEntry(index, 'agent', displayText ?? speechText);
+    updateChatEntry(index, 'sentali', displayText ?? speechText);
     isSpeaking = false;
     visemeActive = false;
     clearSentimentLayer();
@@ -1811,7 +1812,7 @@ function initMicButton() {
       if (input) input.value = e.results[0][0].transcript;
       sendToAgent();
     };
-    recog.onerror = e => addChatEntry('agent', `[Mic error: ${e.error}]`);
+    recog.onerror = e => addChatEntry('sentali', `[Mic error: ${e.error}]`);
     recog.start();
   });
 }

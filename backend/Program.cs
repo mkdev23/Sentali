@@ -1,4 +1,5 @@
-﻿using System;
+﻿// Program.cs
+using System;
 using System.IO;
 using DotNetEnv;
 using Microsoft.AspNetCore.StaticFiles;
@@ -46,7 +47,7 @@ builder.Services.AddSingleton<DefaultAzureCredential>();
 builder.Services.AddSingleton<GptService>();
 
 // 6) Azure Blob Storage with SAS URL (for TI feeds)
-builder.Services.AddSingleton<BlobServiceClient?>(sp =>
+builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
     var sasUrl = config["ThreatIntelSasUrl"] ?? Environment.GetEnvironmentVariable("THREAT_INTEL_SAS_URL");
@@ -104,8 +105,6 @@ builder.Services.AddSingleton(new BlobServiceClient(
     new Uri("https://sentalistorage23075.blob.core.windows.net"), // ✅ account endpoint only
     new DefaultAzureCredential()
 ));
-
-
 
 var app = builder.Build();
 
