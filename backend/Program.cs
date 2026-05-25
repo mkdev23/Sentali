@@ -97,14 +97,17 @@ builder.Services.AddSingleton<TtsService>();
 // 10) HttpClient for API calls
 builder.Services.AddHttpClient();
 
-// 11) MVC Controllers + Swagger
+// 11) MVC Controllers & Blob Storage Client
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+var blobEndpoint = cfg["BLOB_STORAGE_ENDPOINT"] ?? "https://sentalistorage23075.blob.core.windows.net";
 builder.Services.AddSingleton(new BlobServiceClient(
-    new Uri("https://sentalistorage23075.blob.core.windows.net"), // ✅ account endpoint only
+    new Uri(blobEndpoint),
     new DefaultAzureCredential()
 ));
+
+// 11.5) Swagger
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 

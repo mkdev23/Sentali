@@ -15,20 +15,15 @@ namespace SentaliApp.Services
         private readonly BlobServiceClient _serviceClient;
         private readonly ILogger<BlobStorageService> _logger;
 
-        public BlobStorageService(IConfiguration config, ILogger<BlobStorageService> logger)
+        public BlobStorageService(BlobServiceClient serviceClient, IConfiguration config, ILogger<BlobStorageService> logger)
         {
             _logger = logger;
-
-            var endpointRaw = config["BLOB_STORAGE_ENDPOINT"]?.Trim()
-                ?? throw new InvalidOperationException("BLOB_STORAGE_ENDPOINT is missing");
+            _serviceClient = serviceClient ?? throw new ArgumentNullException(nameof(serviceClient));
 
             var containerName = config["BLOB_CONTAINER_NAME"]?.Trim()
-                ?? throw new InvalidOperationException("BLOB_CONTAINER_NAME is missing");
+                ?? Environment.GetEnvironmentVariable("BLOB_CONTAINER_NAME")
+                ?? "tts-cache"; // Fallback to a default if missing
 
-            if (!Uri.TryCreate(endpointRaw, UriKind.Absolute, out var endpointUri))
-                throw new InvalidOperationException($"Invalid BLOB_STORAGE_ENDPOINT: '{endpointRaw}'");
-
-            _serviceClient = new BlobServiceClient(endpointUri, new DefaultAzureCredential());
             _container = _serviceClient.GetBlobContainerClient(containerName);
         }
 

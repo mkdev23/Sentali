@@ -94,7 +94,7 @@ Each agent can have:
 
 ## 📂 Project Structure
 
-SentaliApp/
+Sentali/
 ├── backend/           # .NET backend services
 ├── frontend/          # Unity WebGL + Three.js frontend
 │   ├── public/Assets/ # VRM, WAV, HDRI files
@@ -109,7 +109,7 @@ SentaliApp/
 ### Clone the repository
 ~~~~bash
 git clone https://github.com/mkdev23/Sentali.git
-cd Sentali/SentaliApp
+cd Sentali
 ~~~~
 
 ### Install dependencies
